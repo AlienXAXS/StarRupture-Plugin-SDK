@@ -137,7 +137,7 @@
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
       <PrecompiledHeaderFile>pch.h</PrecompiledHeaderFile>
       <LanguageStandard>stdcpp20</LanguageStandard>
-      <AdditionalIncludeDirectories>$(SolutionDir)StarRupture SDK\SDK;$(ProjectDir);$(SolutionDir)src;$(SolutionDir)include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(SolutionDir)StarRupture SDK\Server\;$(SolutionDir)StarRupture SDK\Server\SDK;$(ProjectDir);$(SolutionDir)src;$(SolutionDir)include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
       <SubSystem>Windows</SubSystem>
@@ -156,7 +156,7 @@
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
       <PrecompiledHeaderFile>pch.h</PrecompiledHeaderFile>
       <LanguageStandard>stdcpp20</LanguageStandard>
-      <AdditionalIncludeDirectories>$(SolutionDir)StarRupture SDK\SDK;$(ProjectDir);$(SolutionDir)src;$(SolutionDir)include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(SolutionDir)StarRupture SDK\Server\;$(SolutionDir)StarRupture SDK\Server\SDK;$(ProjectDir);$(SolutionDir)src;$(SolutionDir)include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
       <SubSystem>Windows</SubSystem>
@@ -175,7 +175,7 @@
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
       <PrecompiledHeaderFile>pch.h</PrecompiledHeaderFile>
       <LanguageStandard>stdcpp20</LanguageStandard>
-      <AdditionalIncludeDirectories>$(StarRuptureSDKConfigDir);$(SolutionDir)StarRupture SDK\SDK;$(ProjectDir);$(SolutionDir)src;$(SolutionDir)include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(StarRuptureSDKConfigDir);$(SolutionDir)StarRupture SDK\Server\;$(SolutionDir)StarRupture SDK\Server\SDK;$(ProjectDir);$(SolutionDir)src;$(SolutionDir)include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
       <SubSystem>Windows</SubSystem>
@@ -194,7 +194,7 @@
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
       <PrecompiledHeaderFile>pch.h</PrecompiledHeaderFile>
       <LanguageStandard>stdcpp20</LanguageStandard>
-      <AdditionalIncludeDirectories>$(StarRuptureSDKConfigDir);$(SolutionDir)StarRupture SDK\SDK;$(ProjectDir);$(SolutionDir)src;$(SolutionDir)include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(StarRuptureSDKConfigDir);$(SolutionDir)StarRupture SDK\Server\;$(SolutionDir)StarRupture SDK\Server\SDK;$(ProjectDir);$(SolutionDir)src;$(SolutionDir)include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
       <SubSystem>Windows</SubSystem>
@@ -213,7 +213,7 @@
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
       <PrecompiledHeaderFile>pch.h</PrecompiledHeaderFile>
       <LanguageStandard>stdcpp20</LanguageStandard>
-      <AdditionalIncludeDirectories>$(StarRuptureSDKConfigDir);$(SolutionDir)StarRupture SDK\SDK;$(ProjectDir);$(SolutionDir)src;$(SolutionDir)include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(StarRuptureSDKConfigDir);$(SolutionDir)StarRupture SDK\Server\;$(SolutionDir)StarRupture SDK\Server\SDK;$(ProjectDir);$(SolutionDir)src;$(SolutionDir)include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
       <SubSystem>Windows</SubSystem>
@@ -232,7 +232,7 @@
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
       <PrecompiledHeaderFile>pch.h</PrecompiledHeaderFile>
       <LanguageStandard>stdcpp20</LanguageStandard>
-      <AdditionalIncludeDirectories>$(StarRuptureSDKConfigDir);$(SolutionDir)StarRupture SDK\SDK;$(ProjectDir);$(SolutionDir)src;$(SolutionDir)include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(StarRuptureSDKConfigDir);$(SolutionDir)StarRupture SDK\Server\;$(SolutionDir)StarRupture SDK\Server\SDK;$(ProjectDir);$(SolutionDir)src;$(SolutionDir)include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
       <SubSystem>Windows</SubSystem>
