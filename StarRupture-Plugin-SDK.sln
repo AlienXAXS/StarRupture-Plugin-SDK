@@ -1,0 +1,34 @@
+
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.0.31903.59
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "ExamplePlugin", "ExamplePlugin\ExamplePlugin.vcxproj", "{E8F3A2D4-5C9B-4F1E-8A7D-3B2C1D4E5F6A}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Client Debug|x64 = Client Debug|x64
+		Client Release|x64 = Client Release|x64
+		Debug|x64 = Debug|x64
+		Release|x64 = Release|x64
+		Server Debug|x64 = Server Debug|x64
+		Server Release|x64 = Server Release|x64
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{E8F3A2D4-5C9B-4F1E-8A7D-3B2C1D4E5F6A}.Client Debug|x64.ActiveCfg = Client Debug|x64
+		{E8F3A2D4-5C9B-4F1E-8A7D-3B2C1D4E5F6A}.Client Debug|x64.Build.0 = Client Debug|x64
+		{E8F3A2D4-5C9B-4F1E-8A7D-3B2C1D4E5F6A}.Client Release|x64.ActiveCfg = Client Release|x64
+		{E8F3A2D4-5C9B-4F1E-8A7D-3B2C1D4E5F6A}.Client Release|x64.Build.0 = Client Release|x64
+		{E8F3A2D4-5C9B-4F1E-8A7D-3B2C1D4E5F6A}.Debug|x64.ActiveCfg = Debug|x64
+		{E8F3A2D4-5C9B-4F1E-8A7D-3B2C1D4E5F6A}.Debug|x64.Build.0 = Debug|x64
+		{E8F3A2D4-5C9B-4F1E-8A7D-3B2C1D4E5F6A}.Release|x64.ActiveCfg = Release|x64
+		{E8F3A2D4-5C9B-4F1E-8A7D-3B2C1D4E5F6A}.Release|x64.Build.0 = Release|x64
+		{E8F3A2D4-5C9B-4F1E-8A7D-3B2C1D4E5F6A}.Server Debug|x64.ActiveCfg = Server Debug|x64
+		{E8F3A2D4-5C9B-4F1E-8A7D-3B2C1D4E5F6A}.Server Debug|x64.Build.0 = Server Debug|x64
+		{E8F3A2D4-5C9B-4F1E-8A7D-3B2C1D4E5F6A}.Server Release|x64.ActiveCfg = Server Release|x64
+		{E8F3A2D4-5C9B-4F1E-8A7D-3B2C1D4E5F6A}.Server Release|x64.Build.0 = Server Release|x64
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+EndGlobal

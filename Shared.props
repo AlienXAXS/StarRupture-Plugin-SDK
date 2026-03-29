@@ -1,0 +1,80 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+
+  <!-- ============================================================
+       StarRuptureSDKSourceDir
+       Points to the SDK subdirectory containing Basic.cpp,
+       CoreUObject_functions.cpp and Engine_functions.cpp for the
+       active configuration.
+       ============================================================ -->
+  <PropertyGroup Condition="'$(Configuration)' == 'Debug' Or '$(Configuration)' == 'Release'">
+    <StarRuptureSDKSourceDir>$(SolutionDir)StarRupture SDK\SDK\</StarRuptureSDKSourceDir>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)' == 'Client Debug' Or '$(Configuration)' == 'Client Release'">
+    <StarRuptureSDKSourceDir>$(SolutionDir)StarRupture SDK\Client\SDK\</StarRuptureSDKSourceDir>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)' == 'Server Debug' Or '$(Configuration)' == 'Server Release'">
+    <StarRuptureSDKSourceDir>$(SolutionDir)StarRupture SDK\Server\SDK\</StarRuptureSDKSourceDir>
+  </PropertyGroup>
+
+  <!-- ============================================================
+       StarRuptureSDKConfigDir
+       Additional include directories injected for Client/Server
+       builds. Includes both the top-level override headers and the
+       generated SDK sub-directory headers.
+       ============================================================ -->
+  <PropertyGroup Condition="'$(Configuration)' == 'Client Debug' Or '$(Configuration)' == 'Client Release'">
+    <StarRuptureSDKConfigDir>$(SolutionDir)StarRupture SDK\Client\;$(SolutionDir)StarRupture SDK\Client\SDK\</StarRuptureSDKConfigDir>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)' == 'Server Debug' Or '$(Configuration)' == 'Server Release'">
+    <StarRuptureSDKConfigDir>$(SolutionDir)StarRupture SDK\Server\;$(SolutionDir)StarRupture SDK\Server\SDK\</StarRuptureSDKConfigDir>
+  </PropertyGroup>
+
+  <!-- ============================================================
+       MODLOADER_CLIENT_BUILD / MODLOADER_SERVER_BUILD
+       Injected into PreprocessorDefinitions for all ClCompile items
+       so source files can use:
+         #if defined(MODLOADER_CLIENT_BUILD)   ...client-only code...
+         #elif defined(MODLOADER_SERVER_BUILD)  ...server-only code...
+         #else                                  ...generic fallback...
+         #endif
+       Legacy Debug / Release configurations get neither define,
+       matching the #else fallback documented in scan_patterns.h.
+       ============================================================ -->
+  <ItemDefinitionGroup Condition="'$(Configuration)' == 'Client Debug' Or '$(Configuration)' == 'Client Release'">
+    <ClCompile>
+      <PreprocessorDefinitions>MODLOADER_CLIENT_BUILD;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)' == 'Server Debug' Or '$(Configuration)' == 'Server Release'">
+    <ClCompile>
+      <PreprocessorDefinitions>MODLOADER_SERVER_BUILD;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+  </ItemDefinitionGroup>
+
+  <!-- ============================================================
+       MODLOADER_BUILD_TAG
+       Injected by CI via /p:ModLoaderBuildTag="release-YYYY.MM.DD-HHmmss".
+       Plugins embed this in PluginInfo.version so the auto-updater
+       can identify which build is installed.
+       Dev / local builds get no define -> fallback "dev" in plugin code.
+       ============================================================ -->
+  <ItemDefinitionGroup Condition="'$(ModLoaderBuildTag)' != ''">
+    <ClCompile>
+      <PreprocessorDefinitions>MODLOADER_BUILD_TAG="$(ModLoaderBuildTag)";%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+  </ItemDefinitionGroup>
+
+  <!-- ============================================================
+       AUTOUPDATE_MANIFEST_URL
+       Injected by CI per variant via /p:AutoUpdateManifestUrl="https://...".
+       Baked into dwmapi.dll as the default manifest URL.
+       Empty on dev builds -> auto-update disabled at runtime.
+       ============================================================ -->
+  <ItemDefinitionGroup Condition="'$(AutoUpdateManifestUrl)' != ''">
+    <ClCompile>
+      <PreprocessorDefinitions>AUTOUPDATE_MANIFEST_URL="$(AutoUpdateManifestUrl)";%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+  </ItemDefinitionGroup>
+
+</Project>
