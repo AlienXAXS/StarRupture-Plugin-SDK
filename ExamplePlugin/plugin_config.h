@@ -45,27 +45,27 @@ namespace ExamplePluginConfig
 	class Config
 	{
 	public:
-		static void Initialize(IPluginConfig* config)
+		static void Initialize(IPluginSelf* self)
 		{
-			s_config = config;
-			
+			s_self = self;
+
 			// Initialize config from schema - creates file with defaults if missing
-			if (s_config)
+			if (s_self)
 			{
-				s_config->InitializeFromSchema("ExamplePlugin", &SCHEMA);
+				s_self->config->InitializeFromSchema(s_self, &SCHEMA);
 			}
 		}
 
 		// Example accessors for each config value
 		static bool IsEnabled()
 		{
-			return s_config ? s_config->ReadBool("ExamplePlugin", "General", "Enabled", true) : true;
+			return s_self ? s_self->config->ReadBool(s_self, "General", "Enabled", true) : true;
 		}
 
 		static const char* GetExampleString()
 		{
 			static char buffer[256];
-			if (s_config && s_config->ReadString("ExamplePlugin", "General", "ExampleString", buffer, sizeof(buffer), "Hello World"))
+			if (s_self && s_self->config->ReadString(s_self, "General", "ExampleString", buffer, sizeof(buffer), "Hello World"))
 			{
 				return buffer;
 			}
@@ -74,15 +74,15 @@ namespace ExamplePluginConfig
 
 		static int GetExampleNumber()
 		{
-			return s_config ? s_config->ReadInt("ExamplePlugin", "Settings", "ExampleNumber", 42) : 42;
+			return s_self ? s_self->config->ReadInt(s_self, "Settings", "ExampleNumber", 42) : 42;
 		}
 
 		static float GetExampleFloat()
 		{
-			return s_config ? s_config->ReadFloat("ExamplePlugin", "Settings", "ExampleFloat", 3.14f) : 3.14f;
+			return s_self ? s_self->config->ReadFloat(s_self, "Settings", "ExampleFloat", 3.14f) : 3.14f;
 		}
 
 	private:
-		static IPluginConfig* s_config;
+		static IPluginSelf* s_self;
 	};
 }

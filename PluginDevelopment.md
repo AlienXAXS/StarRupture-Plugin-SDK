@@ -15,6 +15,7 @@ This guide covers building the mod loader from source, creating new plugins, the
 3. [Creating a Plugin](#creating-a-plugin)
 4. [Plugin Lifecycle](#plugin-lifecycle)
 5. [API Reference](#api-reference)
+   - [IPluginSelf](#ipluginself)
    - [IPluginLogger](#ipluginlogger)
    - [IPluginConfig](#ipluginconfig)
    - [IPluginScanner](#ipluginscanner)
@@ -29,6 +30,7 @@ This guide covers building the mod loader from source, creating new plugins, the
      - [hooks->Input (IPluginInputEvents) -- Client only](#hooksinput)
      - [hooks->UI (IPluginUIEvents) -- Client only](#hooksui)
      - [hooks->HUD (IPluginHUDEvents) -- Client only](#hookshud)
+     - [hooks->Network (IPluginNetworkChannel) -- Server + Client](#hooksnetwork)
 6. [Interface Version Changelog](#interface-version-changelog)
 7. [Troubleshooting](#troubleshooting)
 
@@ -118,10 +120,9 @@ Use `ExamplePlugin` as your starting point. It is a minimal, working plugin that
 2. **Rename** `ExamplePlugin.vcxproj` to `MyPlugin.vcxproj`.
 3. **Edit** the `.vcxproj` and replace the `<ProjectGuid>` value with a new GUID.
 4. **Update** `s_pluginInfo` in `plugin.cpp` with your plugin's name, version, author, and description.
-5. **Update** all `"ExamplePlugin"` string literals in `plugin_helpers.h` and `plugin_config.h` to `"MyPlugin"`.
-6. **Add** the project to the solution: right-click solution > Add > Existing Project.
-7. **Build** -- the DLL is placed in `bin\x64\[Configuration]\plugins\`.
-8. **Install** -- copy the DLL to `<game_dir>\Plugins\`.
+5. **Add** the project to the solution: right-click solution > Add > Existing Project.
+6. **Build** -- the DLL is placed in `bin\x64\[Configuration]\plugins\`.
+7. **Install** -- copy the DLL to `<game_dir>\Plugins\`.
 
 ### Minimal Plugin (plugin.cpp)
 
@@ -129,15 +130,9 @@ Use `ExamplePlugin` as your starting point. It is a minimal, working plugin that
 #include "plugin.h"
 #include "plugin_helpers.h"
 
-static IPluginLogger*  g_logger  = nullptr;
-static IPluginConfig*  g_config  = nullptr;
-static IPluginScanner* g_scanner = nullptr;
-static IPluginHooks*   g_hooks   = nullptr;
+static IPluginSelf* g_self = nullptr;
 
-IPluginLogger*  GetLogger()  { return g_logger; }
-IPluginConfig*  GetConfig()  { return g_config; }
-IPluginScanner* GetScanner() { return g_scanner; }
-IPluginHooks*   GetHooks()   { return g_hooks; }
+IPluginSelf* GetSelf() { return g_self; }
 
 static PluginInfo s_pluginInfo = {
     "MyPlugin",
@@ -154,14 +149,9 @@ __declspec(dllexport) PluginInfo* GetPluginInfo()
     return &s_pluginInfo;
 }
 
-__declspec(dllexport) bool PluginInit(
-    IPluginLogger* logger, IPluginConfig* config,
-    IPluginScanner* scanner, IPluginHooks* hooks)
+__declspec(dllexport) bool PluginInit(IPluginSelf* self)
 {
-    g_logger  = logger;
-    g_config  = config;
-    g_scanner = scanner;
-    g_hooks   = hooks;
+    g_self = self; // pointer is stable for the plugin's lifetime
 
     LOG_INFO("Plugin initializing...");
     // Register callbacks, install hooks, etc.
@@ -172,10 +162,7 @@ __declspec(dllexport) void PluginShutdown()
 {
     LOG_INFO("Plugin shutting down...");
     // Unregister callbacks, remove hooks, free resources.
-    g_logger  = nullptr;
-    g_config  = nullptr;
-    g_scanner = nullptr;
-    g_hooks   = nullptr;
+    g_self = nullptr;
 }
 
 } // extern "C"
@@ -196,16 +183,16 @@ static const ConfigEntry CONFIG_ENTRIES[] = {
 static const ConfigSchema SCHEMA = { CONFIG_ENTRIES, 4 };
 ```
 
-In `PluginInit`, call `config->InitializeFromSchema("MyPlugin", &SCHEMA)`. The loader creates `Plugins/config/MyPlugin.ini` with all defaults if it does not yet exist.
+In `PluginInit`, call `self->config->InitializeFromSchema(self, &SCHEMA)`. The loader creates `Plugins/config/MyPlugin.ini` with all defaults if it does not yet exist.
 
 Read values with type-safe helpers:
 
 ```cpp
-bool    enabled = config->ReadBool  ("MyPlugin", "General",  "Enabled",     true);
-int     rate    = config->ReadInt   ("MyPlugin", "Settings", "RefreshRate",  60);
-float   scale   = config->ReadFloat ("MyPlugin", "Settings", "ScaleFactor",  1.0f);
+bool    enabled = self->config->ReadBool  (self, "General",  "Enabled",     true);
+int     rate    = self->config->ReadInt   (self, "Settings", "RefreshRate",  60);
+float   scale   = self->config->ReadFloat (self, "Settings", "ScaleFactor",  1.0f);
 char    name[64];
-config->ReadString("MyPlugin", "General", "PlayerName", name, sizeof(name), "Alice");
+self->config->ReadString(self, "General", "PlayerName", name, sizeof(name), "Alice");
 ```
 
 ---
@@ -217,8 +204,8 @@ Mod loader scans Plugins/ directory
     --> loads MyPlugin.dll
     --> calls GetPluginInfo()    -- reads name, version, interfaceVersion
     --> version check: must be in [PLUGIN_INTERFACE_VERSION_MIN, MAX]
-    --> calls PluginInit(logger, config, scanner, hooks)
-        -- store interface pointers
+    --> calls PluginInit(self)   -- IPluginSelf* bundles name, version, logger, config, scanner, hooks
+        -- store self pointer (stable for the plugin's lifetime)
         -- register callbacks
         -- install hooks
         -- return true (success) or false (failure, plugin is unloaded)
@@ -230,14 +217,54 @@ Game closes (or plugin hot-unloaded):
         -- unregister all callbacks
         -- remove all hooks
         -- free resources
-        -- clear interface pointers
+        -- clear self pointer
 ```
 
 ---
 
 ## API Reference
 
-All four interface pointers are valid for the lifetime of the plugin (from `PluginInit` return until `PluginShutdown` returns). Store them in statics.
+The `IPluginSelf*` pointer passed to `PluginInit` is stable for the plugin's lifetime (from `PluginInit` return until `PluginShutdown` returns). Store it in a static and use it for all API calls.
+
+---
+
+### IPluginSelf
+
+`IPluginSelf` is the single entry point your plugin receives. It bundles identity and all sub-interfaces:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `name` | `const char*` | Plugin name from `PluginInfo` |
+| `version` | `const char*` | Plugin version from `PluginInfo` |
+| `logger` | `IPluginLogger*` | Logging interface |
+| `config` | `IPluginConfig*` | Config read/write interface |
+| `scanner` | `IPluginScanner*` | Memory pattern scanner |
+| `hooks` | `IPluginHooks*` | All hook and event sub-interfaces |
+
+Store the pointer once in `PluginInit` and use it everywhere:
+
+```cpp
+static IPluginSelf* g_self = nullptr;
+
+bool PluginInit(IPluginSelf* self)
+{
+    g_self = self;
+    self->logger->Info(self, "Hello from %s v%s", self->name, self->version);
+    self->config->InitializeFromSchema(self, &SCHEMA);
+    self->hooks->Engine->RegisterOnInit(&OnEngineInit);
+    return true;
+}
+```
+
+The `plugin_helpers.h` from the SDK exposes convenience wrappers:
+
+```cpp
+IPluginSelf* GetSelf();
+
+inline IPluginHooks*   GetHooks()   { auto* s = GetSelf(); return s ? s->hooks   : nullptr; }
+inline IPluginConfig*  GetConfig()  { auto* s = GetSelf(); return s ? s->config  : nullptr; }
+inline IPluginScanner* GetScanner() { auto* s = GetSelf(); return s ? s->scanner : nullptr; }
+```
 
 ---
 
@@ -253,35 +280,37 @@ LOG_WARN ("Something unexpected: %s", msg);
 LOG_ERROR("Fatal condition encountered");
 ```
 
-Macro definitions in `plugin_helpers.h` (replace `"MyPlugin"` with your plugin name):
+Macro definitions in `plugin_helpers.h`:
 
 ```cpp
-#define LOG_INFO(fmt, ...) if (auto l = GetLogger()) l->Info("MyPlugin", fmt, ##__VA_ARGS__)
+#define LOG_INFO(fmt, ...) if (auto s = GetSelf()) s->logger->Info(s, fmt, ##__VA_ARGS__)
 ```
 
 ---
 
 ### IPluginConfig
 
+All config functions take `const IPluginSelf* self` as their first argument. The plugin name is derived from `self->name` — no string literals required.
+
 ```cpp
 // Schema-based initialization (recommended -- auto-creates INI with defaults)
-config->InitializeFromSchema("MyPlugin", &SCHEMA);
+self->config->InitializeFromSchema(self, &SCHEMA);
 
 // Read
-bool   b = config->ReadBool  ("MyPlugin", "Section", "Key", defaultBool);
-int    i = config->ReadInt   ("MyPlugin", "Section", "Key", defaultInt);
-float  f = config->ReadFloat ("MyPlugin", "Section", "Key", defaultFloat);
+bool   b = self->config->ReadBool  (self, "Section", "Key", defaultBool);
+int    i = self->config->ReadInt   (self, "Section", "Key", defaultInt);
+float  f = self->config->ReadFloat (self, "Section", "Key", defaultFloat);
 char buf[256];
-config->ReadString("MyPlugin", "Section", "Key", buf, sizeof(buf), "default");
+self->config->ReadString(self, "Section", "Key", buf, sizeof(buf), "default");
 
 // Write
-config->WriteBool  ("MyPlugin", "Section", "Key", true);
-config->WriteInt   ("MyPlugin", "Section", "Key", 42);
-config->WriteFloat ("MyPlugin", "Section", "Key", 3.14f);
-config->WriteString("MyPlugin", "Section", "Key", "value");
+self->config->WriteBool  (self, "Section", "Key", true);
+self->config->WriteInt   (self, "Section", "Key", 42);
+self->config->WriteFloat (self, "Section", "Key", 3.14f);
+self->config->WriteString(self, "Section", "Key", "value");
 
 // Repair a config file (adds missing keys with defaults, preserves existing values)
-config->ValidateConfig("MyPlugin", &SCHEMA);
+self->config->ValidateConfig(self, &SCHEMA);
 ```
 
 Config files are stored in `Plugins/config/<PluginName>.ini`.
@@ -657,6 +686,67 @@ uintptr_t gatherAddr = hooks->HUD->GetGatherPlayersDataAddress();
 
 ---
 
+#### hooks->Network
+
+`IPluginNetworkChannel` -- typed packet send/receive between client and server. Available on **both client and server builds**. Always `nullptr` on generic (non-client, non-server) builds.
+
+Use the typed helpers from `plugin_network_helpers.h` rather than calling `IPluginNetworkChannel` directly.
+
+**Define a packet:**
+
+```cpp
+#pragma pack(push, 1)
+struct MyPacket {
+    float x, y, z;
+    int32_t flags;
+};
+#pragma pack(pop)
+```
+
+**Server -- send to clients:**
+
+```cpp
+#include "plugin_network_helpers.h"
+
+// Send to all connected clients
+MyPacket pkt = { 1.0f, 2.0f, 3.0f, 42 };
+Network::SendPacketToAllClients(g_self->hooks, g_self, pkt);
+
+// Send to a specific player controller
+Network::SendPacketToPlayer(g_self->hooks, g_self, playerController, pkt);
+
+// Receive on server (register in PluginInit)
+Network::OnServerReceive<MyPacket>(g_self->hooks, g_self,
+    [](void* playerController, const MyPacket& p) {
+        // handle packet from a client
+    });
+```
+
+**Client -- send to server:**
+
+```cpp
+// Send to server
+Network::SendPacketToServer(g_self->hooks, g_self, pkt);
+
+// Receive on client (register in PluginInit)
+Network::OnReceive<MyPacket>(g_self->hooks, g_self,
+    [](const MyPacket& p) {
+        // handle packet from the server
+    });
+```
+
+**Null-check on generic builds:**
+
+```cpp
+if (g_self->hooks->Network) {
+    Network::SendPacketToAllClients(g_self->hooks, g_self, pkt);
+}
+```
+
+Packets are routed by plugin name (from `self->name`) and type tag, so different plugins cannot accidentally receive each other's packets.
+
+---
+
 ## Interface Version Changelog
 
 The loader accepts plugins whose `interfaceVersion` is in `[PLUGIN_INTERFACE_VERSION_MIN, PLUGIN_INTERFACE_VERSION_MAX]`. All interface structs are append-only so older plugins still load without recompilation as long as they are within the supported range.
@@ -679,8 +769,11 @@ The loader accepts plugins whose `interfaceVersion` is in `[PLUGIN_INTERFACE_VER
 | v14     | **yes**     | **ABI break.** Replaced all flat callbacks with typed sub-interface pointers. `IPluginHooks` now contains only group pointers (`Spawner`, `Hooks`, `Memory`, `Engine`, `World`, `Players`, `Actors`). Access via `hooks->Engine->RegisterOnInit(...)`. Added 10 named callback typedefs. MIN bumped to 14. |
 | v15     | no          | Added `EModKey`, `EModKeyEvent`, `PluginKeybindCallback`, `IPluginInputEvents` and `hooks->Input` (client only, nullptr on server/generic). Also folded: `IModLoaderImGui` function table, `PluginImGuiRenderCallback`, `PluginPanelDesc`, `PanelHandle`, `PluginConfigChangedCallback`, `IPluginUIEvents` and `hooks->UI` (client only). `RegisterPanel` returns a `PanelHandle`; `SetPanelOpen`/`SetPanelClose` take a handle instead of a title string. |
 | v16     | no          | Added `PluginWidgetDesc`, `WidgetHandle`, `RegisterWidget`, `UnregisterWidget`, `SetWidgetVisible` to `IPluginUIEvents` for always-on overlay windows. Added `PluginHUDPostRenderCallback`, `IPluginHUDEvents`, `hooks->HUD` (client only, nullptr on server/generic) with `RegisterOnPostRender` and `GetGatherPlayersDataAddress`. Extended `IPluginEngineEvents` with `GetStaticLoadObjectAddress()` (all builds). Byte patterns for `AHUD_PostRender`, `StaticLoadObject`, and `GatherPlayersData` moved from `Compass_Plugin` into the modloader's `scan_patterns.h`. |
+| v17     | no          | Added `IPluginNetworkChannel` and `hooks->Network` (server + client builds; nullptr on generic). Typed packet routing between client and server by plugin name + type tag. Added `plugin_network_helpers.h` with `SendPacketToAllClients`, `SendPacketToPlayer`, `SendPacketToServer`, `OnReceive`, `OnServerReceive` template helpers. |
+| v18     | no          | Extended `IPluginNetworkChannel` with additional transport variants and broadcast exclusion support. |
+| v19     | **yes**     | **ABI break.** Introduced `IPluginSelf` — a per-plugin identity and service bundle (`name`, `version`, `logger`, `config`, `scanner`, `hooks`). `PluginInit` signature changed from four separate pointers to `PluginInit(IPluginSelf* self)`. Removed `const char* pluginName` from all `IPluginLogger`, `IPluginConfig`, and `IPluginNetworkChannel` functions — replaced with `const IPluginSelf* self`. MIN bumped to 19. |
 
-The current `PLUGIN_INTERFACE_VERSION_MIN` is **14** and `PLUGIN_INTERFACE_VERSION_MAX` is **16**.
+The current `PLUGIN_INTERFACE_VERSION_MIN` is **19** and `PLUGIN_INTERFACE_VERSION_MAX` is **19**.
 
 ---
 
@@ -710,6 +803,7 @@ The current `PLUGIN_INTERFACE_VERSION_MIN` is **14** and `PLUGIN_INTERFACE_VERSI
 ### Client-Only Interface is Null
 
 - `hooks->Input`, `hooks->UI`, and `hooks->HUD` are always `nullptr` on server and generic builds.
+- `hooks->Network` is always `nullptr` on generic builds (available on both client and server).
 - Always null-check before using these pointers.
 - If your plugin targets both client and server, guard client-only code with a null check, not with `#ifdef`.
 

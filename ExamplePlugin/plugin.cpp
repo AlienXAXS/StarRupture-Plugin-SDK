@@ -2,17 +2,10 @@
 #include "plugin_helpers.h"
 #include "plugin_config.h"
 
-// Global plugin interface pointers
-static IPluginLogger* g_logger = nullptr;
-static IPluginConfig* g_config = nullptr;
-static IPluginScanner* g_scanner = nullptr;
-static IPluginHooks* g_hooks = nullptr;
+// Global plugin self pointer — stable for the plugin's lifetime, retained from PluginInit
+static IPluginSelf* g_self = nullptr;
 
-// Helper functions to access plugin interfaces
-IPluginLogger* GetLogger() { return g_logger; }
-IPluginConfig* GetConfig() { return g_config; }
-IPluginScanner* GetScanner() { return g_scanner; }
-IPluginHooks* GetHooks() { return g_hooks; }
+IPluginSelf* GetSelf() { return g_self; }
 
 // Plugin metadata
 #ifndef MODLOADER_BUILD_TAG
@@ -34,18 +27,15 @@ extern "C" {
 		return &s_pluginInfo;
 	}
 
-	__declspec(dllexport) bool PluginInit(IPluginLogger* logger, IPluginConfig* config, IPluginScanner* scanner, IPluginHooks* hooks)
+	__declspec(dllexport) bool PluginInit(IPluginSelf* self)
 	{
-		// Store plugin interface pointers
-		g_logger = logger;
-		g_config = config;
-		g_scanner = scanner;
-		g_hooks = hooks;
+		// Store the plugin self pointer — valid for the plugin's entire lifetime
+		g_self = self;
 
 		LOG_INFO("Plugin initializing...");
 
 		// Initialize config system (optional - creates config file with defaults)
-		ExamplePluginConfig::Config::Initialize(config);
+		ExamplePluginConfig::Config::Initialize(self);
 
 		// Check if plugin is enabled via config
 		if (!ExamplePluginConfig::Config::IsEnabled())
@@ -81,11 +71,7 @@ extern "C" {
 		// - Free allocated resources
 		// - Unregister callbacks
 
-		// Clear interface pointers
-		g_logger = nullptr;
-		g_config = nullptr;
-		g_scanner = nullptr;
-		g_hooks = nullptr;
+		g_self = nullptr;
 	}
 
 } // extern "C"
