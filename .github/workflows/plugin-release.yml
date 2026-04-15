@@ -1,0 +1,244 @@
+# Reusable release workflow for StarRupture plugins.
+#
+# Usage — in your plugin repo's .github/workflows/release.yml:
+#
+#   jobs:
+#     release:
+#       uses: AlienXAXS/StarRupture-Plugin-SDK/.github/workflows/plugin-release.yml@main
+#       with:
+#         plugin_name: Compass_Plugin
+#         solution_file: Compass_Plugin.sln
+#       secrets: inherit
+#
+# Inputs:
+#   plugin_name     – Base name used for DLL, manifest, ZIP and release assets.
+#   solution_file   – Path to the .sln file relative to the repo root.
+#   variant         – Build variant: "Client" (default) or "Server".
+#   release_title   – Optional custom release title prefix (defaults to plugin_name).
+
+name: Plugin Release (reusable)
+
+on:
+  workflow_call:
+    inputs:
+      plugin_name:
+        description: 'Base plugin name (e.g. Compass_Plugin)'
+        required: true
+        type: string
+      solution_file:
+        description: 'Path to the .sln file relative to the repo root'
+        required: true
+        type: string
+      variant:
+        description: 'Build variant: Client or Server'
+        required: false
+        type: string
+        default: 'Client'
+      release_title:
+        description: 'Release title prefix (defaults to plugin_name)'
+        required: false
+        type: string
+        default: ''
+
+jobs:
+  build-and-release:
+    runs-on: windows-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout plugin repository
+        uses: actions/checkout@v4
+
+      - name: Checkout Plugin SDK
+        uses: actions/checkout@v4
+        with:
+          repository: AlienXAXS/StarRupture-Plugin-SDK
+          path: plugin-sdk
+
+      - name: Checkout Game SDK
+        uses: actions/checkout@v4
+        with:
+          repository: AlienXAXS/StarRupture-Game-SDK
+          path: game-sdk
+
+      - name: Add MSBuild to PATH
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Generate release tag
+        id: tag
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          function Parse-Semver([string]$v) {
+            if ($v -match '^v?(\d+)\.(\d+)\.(\d+)$') {
+              return @{ Major = [int]$Matches[1]; Minor = [int]$Matches[2]; Patch = [int]$Matches[3] }
+            }
+            return $null
+          }
+
+          function Compare-Semver($a, $b) {
+            if ($a.Major -ne $b.Major) { return $a.Major - $b.Major }
+            if ($a.Minor -ne $b.Minor) { return $a.Minor - $b.Minor }
+            return $a.Patch - $b.Patch
+          }
+
+          function Format-Semver($v) { return "v$($v.Major).$($v.Minor).$($v.Patch)" }
+
+          # Find the highest existing semver release tag
+          $latestParsed = $null
+          $releaseTags = gh release list --limit 100 --json tagName |
+            ConvertFrom-Json |
+            Select-Object -ExpandProperty tagName |
+            Where-Object { $_ -match '^v\d+\.\d+\.\d+$' }
+
+          foreach ($t in $releaseTags) {
+            $parsed = Parse-Semver $t
+            if ($parsed -and ($latestParsed -eq $null -or (Compare-Semver $parsed $latestParsed) -gt 0)) {
+              $latestParsed = $parsed
+            }
+          }
+
+          if ($latestParsed -eq $null) {
+            Write-Host "No semver tags found, bootstrapping from v0.0.0"
+            $latestParsed = @{ Major = 0; Minor = 0; Patch = 0 }
+          } else {
+            Write-Host "Latest semver tag: $(Format-Semver $latestParsed)"
+          }
+
+          # Auto-increment: bump minor, reset patch
+          $autoParsed = @{ Major = $latestParsed.Major; Minor = $latestParsed.Minor + 1; Patch = 0 }
+
+          # Optional version file override (must be strictly higher to win)
+          $versionFile = Join-Path $env:GITHUB_WORKSPACE "version"
+          $fileParsed  = $null
+          if (Test-Path $versionFile) {
+            $raw = (Get-Content $versionFile -Raw).Trim()
+            $fileParsed = Parse-Semver $raw
+            if ($fileParsed) { Write-Host "version file specifies: $raw" }
+            else { Write-Warning "version file '$raw' is not valid semver — ignoring." }
+          }
+
+          $chosen = $autoParsed
+          if ($fileParsed -and (Compare-Semver $fileParsed $autoParsed) -gt 0) {
+            $chosen = $fileParsed
+            Write-Host "version file is higher — using it."
+          } else {
+            Write-Host "Auto-increment minor wins."
+          }
+
+          Write-Host "DEBUG latest = $(Format-Semver $latestParsed)"
+          Write-Host "DEBUG auto   = $(Format-Semver $autoParsed)"
+          if ($fileParsed) { Write-Host "DEBUG file   = $(Format-Semver $fileParsed)" }
+          else             { Write-Host "DEBUG file   = <none>" }
+          Write-Host "DEBUG chosen = $(Format-Semver $chosen)"
+
+          $tag = Format-Semver $chosen
+          Write-Host "Final tag: $tag"
+          echo "TAG=$tag" >> $env:GITHUB_OUTPUT
+
+      - name: Build plugin
+        shell: pwsh
+        run: |
+          $config = "${{ inputs.variant }} Release"
+          Write-Host "Building configuration: $config"
+          msbuild "${{ inputs.solution_file }}" `
+            /p:Configuration="$config" `
+            /p:Platform=x64 `
+            /p:PostBuildEventUseInBuild=false `
+            /p:ModLoaderBuildTag="${{ steps.tag.outputs.TAG }}" `
+            /p:GameSDKRoot="${{ github.workspace }}\game-sdk" `
+            /p:PluginSDKInclude="${{ github.workspace }}\plugin-sdk\include" `
+            /m `
+            /v:minimal
+
+      - name: Generate release assets
+        id: assets
+        shell: pwsh
+        run: |
+          $tag      = "${{ steps.tag.outputs.TAG }}"
+          $repo     = "${{ github.repository }}"
+          $ws       = $env:GITHUB_WORKSPACE
+          $name     = "${{ inputs.plugin_name }}"
+          $variant  = "${{ inputs.variant }}"
+          $varLower = $variant.ToLower()
+
+          # Read interface version range from the checked-out Plugin SDK header
+          $header   = Get-Content "$ws\plugin-sdk\include\plugin_interface.h" -Raw
+          $matchMin = [regex]::Match($header, '#define\s+PLUGIN_INTERFACE_VERSION_MIN\s+(\d+)')
+          $matchMax = [regex]::Match($header, '#define\s+PLUGIN_INTERFACE_VERSION_MAX\s+(\d+)')
+          if (-not $matchMin.Success) { throw "Could not find PLUGIN_INTERFACE_VERSION_MIN in plugin_interface.h" }
+          if (-not $matchMax.Success) { throw "Could not find PLUGIN_INTERFACE_VERSION_MAX in plugin_interface.h" }
+          $ifaceMin = [int]$matchMin.Groups[1].Value
+          $ifaceMax = [int]$matchMax.Groups[1].Value
+          Write-Host "Interface version range: [$ifaceMin, $ifaceMax]"
+
+          # Source DLL (and optional PDB) from the build output
+          $dllSrc = "$ws\build\$variant Release\Plugins\$name.dll"
+          $pdbSrc = [System.IO.Path]::ChangeExtension($dllSrc, ".pdb")
+
+          # --- Standalone DLL asset ---
+          $dllAsset = "$ws\$name-$variant.dll"
+          Copy-Item $dllSrc $dllAsset
+          Write-Host "Copied DLL: $dllAsset"
+
+          # --- Per-plugin update manifest ---
+          $manifestPath = "$ws\$name-$varLower-manifest.json"
+          [ordered]@{
+            plugin_name           = $name
+            version               = $tag
+            interface_version_min = $ifaceMin
+            interface_version_max = $ifaceMax
+            download_url          = "https://github.com/$repo/releases/download/$tag/$name-$variant.dll"
+          } | ConvertTo-Json -Depth 1 | Out-File $manifestPath -Encoding utf8NoBOM
+          Write-Host "Generated manifest:"
+          Get-Content $manifestPath
+
+          # --- Plugin ZIP: Plugins\Name.dll + Plugins\Name.json (sidecar) ---
+          $staging = "$ws\staging\Plugins"
+          New-Item -ItemType Directory -Force $staging | Out-Null
+
+          Copy-Item $dllSrc "$staging\$name.dll"
+
+          # Sidecar JSON — placed inside the ZIP so mod loaders can find the manifest URL
+          [ordered]@{
+            manifest_url = "https://github.com/$repo/releases/latest/download/$name-$varLower-manifest.json"
+          } | ConvertTo-Json -Depth 1 | Out-File "$staging\$name.json" -Encoding utf8NoBOM
+
+          if (Test-Path $pdbSrc) {
+            Copy-Item $pdbSrc "$staging\$name.pdb"
+            Write-Host "Included PDB in ZIP."
+          }
+
+          $zipPath = "$ws\$name-$variant-$tag.zip"
+          Compress-Archive -Path "$ws\staging\*" -DestinationPath $zipPath
+          Write-Host "Created plugin ZIP: $zipPath"
+
+          # Expose paths for the release step
+          echo "DLL_ASSET=$dllAsset"         >> $env:GITHUB_OUTPUT
+          echo "MANIFEST_ASSET=$manifestPath" >> $env:GITHUB_OUTPUT
+          echo "ZIP_ASSET=$zipPath"           >> $env:GITHUB_OUTPUT
+
+      - name: Create GitHub Release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $tag     = "${{ steps.tag.outputs.TAG }}"
+          $name    = "${{ inputs.plugin_name }}"
+          $variant = "${{ inputs.variant }}"
+          $title   = if ("${{ inputs.release_title }}" -ne "") { "${{ inputs.release_title }}" } else { $name }
+
+          $assets = @(
+            "${{ steps.assets.outputs.DLL_ASSET }}",
+            "${{ steps.assets.outputs.MANIFEST_ASSET }}",
+            "${{ steps.assets.outputs.ZIP_ASSET }}"
+          )
+
+          Write-Host "Creating release $tag with $($assets.Count) asset(s):"
+          $assets | ForEach-Object { Write-Host "  $_" }
+
+          gh release create $tag @assets `
+            --title "$title $tag" `
+            --generate-notes

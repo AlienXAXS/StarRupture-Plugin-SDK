@@ -1,0 +1,30 @@
+# Copy this file to your plugin repo at: .github/workflows/release.yml
+#
+# This calls the centralised release workflow from the StarRupture Plugin SDK.
+# It will automatically:
+#   - Generate a semantic version tag
+#   - Build your plugin (Client Release)
+#   - Create a per-plugin update manifest  (<PluginName>-client-manifest.json)
+#   - Bundle the DLL + sidecar JSON into a ZIP (<PluginName>-Client-vX.Y.Z.zip)
+#   - Publish a GitHub Release with all three assets
+#
+# Replace the three values marked with TODO below, then delete these comments.
+
+name: Build and Release
+
+on:
+  push:
+    branches:
+      - main
+    paths-ignore:
+      - '**/*.md'
+
+jobs:
+  release:
+    uses: AlienXAXS/StarRupture-Plugin-SDK/.github/workflows/plugin-release.yml@main
+    with:
+      plugin_name: TODO_PluginName          # e.g. Compass_Plugin
+      solution_file: TODO_PluginName.sln    # e.g. Compass_Plugin.sln
+      # variant: Client                     # omit for Client (default), set to Server if needed
+      # release_title: My Plugin            # omit to use plugin_name as title
+    secrets: inherit
