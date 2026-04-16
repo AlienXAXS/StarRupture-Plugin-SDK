@@ -902,7 +902,10 @@ Full list of available accessors:
 
 `IPluginHttpServer` -- HTTP intercept interface (v22). **Server builds only. Always `nullptr` on client and generic builds.** Always null-check before use.
 
-The modloader embeds a lightweight HTTP server. `hooks->HttpServer` lets your plugin mount routes under `/<pluginName>/...` (case-insensitive). Three route types are available:
+The modloader hooks into Unreal Engines existing lightweight HTTP server. `hooks->HttpServer` lets your plugin mount routes under `/<pluginName>/...` (case-insensitive).
+Because we hook into the existing HTTP server, we are able to host HTTP static pages and raw response routes (such as game states) directly on the same port the server uses already for its Server Manager.
+
+Three route types are available:
 
 **Static file routes** serve files from disk:
 
