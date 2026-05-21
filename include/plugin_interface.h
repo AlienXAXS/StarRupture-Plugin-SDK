@@ -23,11 +23,11 @@
 //      Added PluginWindowHints struct and windowHints field to PluginWidgetDesc.
 //      MIN remains 23.
 #define PLUGIN_INTERFACE_VERSION_MIN 26
-#define PLUGIN_INTERFACE_VERSION_MAX 26
+#define PLUGIN_INTERFACE_VERSION_MAX 27
 #define PLUGIN_INTERFACE_VERSION PLUGIN_INTERFACE_VERSION_MAX
 
 enum class PluginLogLevel { Trace = 0, Debug = 1, Info = 2, Warn = 3, Error = 4 };
-enum class ConfigValueType { String, Integer, Float, Boolean };
+enum class ConfigValueType { String, Integer, Float, Boolean, Keybind };
 
 struct ConfigEntry
 {
