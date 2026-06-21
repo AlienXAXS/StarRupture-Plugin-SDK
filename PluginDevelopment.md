@@ -33,7 +33,15 @@ This guide covers building the mod loader from source, creating new plugins, the
      - [hooks->HUD (IPluginHUDEvents) -- Client only](#hookshud)
      - [hooks->Network (IPluginNetworkChannel) -- Server + Client](#hooksnetwork)
      - [hooks->NativePointers (IPluginNativePointers)](#hooksnativepointers)
+     - [hooks->Text (IPluginTextUtils)](#hookstext)
+     - [hooks->NetMode (IPluginNetModeInfo) -- Server + Client](#hooksnetmode)
+     - [hooks->ImGuiTextures (IPluginImGuiTextures) -- Client only](#hooksimguitextures)
+     - [hooks->Splash (IPluginSplash) -- Client only](#hooksplash)
      - [hooks->HttpServer (IPluginHttpServer) -- Server only](#hookshttpserver)
+     - [hooks->Crafting (IPluginCraftingEvents)](#hookscrafting)
+     - [hooks->ObjectWalker (IPluginObjectWalker)](#hooksobjectwalker)
+     - [hooks->Delegate (IPluginDelegateHook)](#hooksdelegate)
+     - [hooks->ObjectProperties (IPluginObjectProperties)](#hooksobjectproperties)
 7. [Interface Version Changelog](#interface-version-changelog)
 8. [Troubleshooting](#troubleshooting)
 
@@ -122,7 +130,7 @@ Use `ExamplePlugin` as your starting point. It is a minimal, working plugin that
 1. **Copy** the `ExamplePlugin` folder and rename it (e.g. `MyPlugin`).
 2. **Rename** `ExamplePlugin.vcxproj` to `MyPlugin.vcxproj`.
 3. **Edit** the `.vcxproj` and replace the `<ProjectGuid>` value with a new GUID.
-4. **Update** `s_pluginInfo` in `plugin.cpp` with your plugin's name, version, author, and description.
+4. **Update** `s_pluginInfo` in `plugin.cpp` with your plugin's name, version, author, description, and `pluginTarget` (`PLUGIN_TARGET_CLIENT` or `PLUGIN_TARGET_SERVER`, required since v33 -- the loader rejects plugins whose target doesn't match the current build).
 5. **Add** the project to the solution: right-click solution > Add > Existing Project.
 6. **Build** -- the DLL is placed in `bin\x64\[Configuration]\plugins\`.
 7. **Install** -- copy the DLL to `<game_dir>\Plugins\`.
@@ -142,7 +150,8 @@ static PluginInfo s_pluginInfo = {
     "1.0.0",
     "Your Name",
     "What this plugin does",
-    PLUGIN_INTERFACE_VERSION
+    PLUGIN_INTERFACE_VERSION,
+    PLUGIN_TARGET_SERVER  // or PLUGIN_TARGET_CLIENT -- required since v33
 };
 
 extern "C" {
@@ -466,19 +475,30 @@ for (int i = 0; i < n; i++) {
 Starting with v14 the interface is entirely sub-interface based. Access every feature via a named group pointer:
 
 ```
-hooks->Engine    -- engine lifecycle (init / shutdown / tick)
-hooks->World     -- world and level events
-hooks->Players   -- player join / leave
-hooks->Actors    -- actor lifecycle
-hooks->Spawner   -- enemy spawner Before/After hooks
-hooks->Hooks     -- low-level hook install / remove / query
-hooks->Memory    -- memory patch / nop / read / alloc
-hooks->Input     -- keybind subscriptions      (CLIENT ONLY -- null on server)
-hooks->UI        -- ImGui panels and widgets   (CLIENT ONLY -- null on server)
-hooks->HUD       -- AHUD PostRender callbacks  (CLIENT ONLY -- null on server)
+hooks->Engine         -- engine lifecycle (init / shutdown / tick)
+hooks->World          -- world and level events
+hooks->Players        -- player join / leave
+hooks->Actors         -- actor lifecycle
+hooks->Spawner        -- enemy spawner Before/After hooks
+hooks->Hooks          -- low-level hook install / remove / query
+hooks->Memory         -- memory patch / nop / read / alloc
+hooks->Input          -- keybind subscriptions      (CLIENT ONLY -- null on server)
+hooks->UI             -- ImGui panels and widgets   (CLIENT ONLY -- null on server)
+hooks->HUD            -- AHUD PostRender callbacks  (CLIENT ONLY -- null on server)
+hooks->Network        -- typed client/server packets (SERVER + CLIENT -- null on generic)
+hooks->NativePointers -- resolved addresses of every function the modloader hooks internally
+hooks->Text           -- FText localization helpers
+hooks->NetMode        -- network mode queries        (SERVER + CLIENT -- null on generic)
+hooks->ImGuiTextures  -- image/texture loading for ImGui (CLIENT ONLY -- null on server)
+hooks->Splash         -- startup splash window feedback (CLIENT ONLY -- null on server)
+hooks->HttpServer     -- HTTP route/filter registration  (SERVER ONLY -- null on client)
+hooks->Crafting       -- crafting-finished events
+hooks->ObjectWalker   -- on-demand GObjects walking and UFunction invocation
+hooks->Delegate       -- generic UE5 multicast-delegate hooking
+hooks->ObjectProperties -- read/write a UPROPERTY by name (survives SDK re-dumps)
 ```
 
-**Client-only sub-interfaces (`Input`, `UI`, `HUD`) are always `nullptr` on server and generic builds.** Always null-check before use:
+**Client-only sub-interfaces (`Input`, `UI`, `HUD`, `ImGuiTextures`, `Splash`) are always `nullptr` on server and generic builds. Server-only (`HttpServer`) is always `nullptr` on client and generic builds. `Network` and `NetMode` are `nullptr` only on generic builds.** Always null-check before use:
 
 ```cpp
 if (hooks->HUD) {
@@ -684,12 +704,27 @@ void OnF1Pressed(EModKey key, EModKeyEvent event) {
 hooks->Input->RegisterKeybind(EModKey::F1, EModKeyEvent::Pressed, &OnF1Pressed);
 hooks->Input->UnregisterKeybind(EModKey::F1, EModKeyEvent::Pressed, &OnF1Pressed);
 
-// By UE key name string (case-insensitive)
+// By UE key name string (case-insensitive). Accepts combo strings too --
+// modifier tokens are case-insensitive, joined with '+'.
 hooks->Input->RegisterKeybindByName("LeftShift", EModKeyEvent::Released, &OnShiftReleased);
 hooks->Input->UnregisterKeybindByName("LeftShift", EModKeyEvent::Released, &OnShiftReleased);
+hooks->Input->RegisterKeybindByName("Ctrl+Shift+F5", EModKeyEvent::Pressed, &OnComboPressed);
+hooks->Input->UnregisterKeybindByName("Ctrl+Shift+F5", EModKeyEvent::Pressed, &OnComboPressed);
 ```
 
 Available enum values include F1-F12, A-Z, digit keys, navigation, modifier keys, numpad, and mouse buttons. See `EModKey` in `plugin_interface.h` for the full list.
+
+Keybinds registered via `RegisterKeybindByName` are tracked by the modloader and automatically re-registered if the user rebinds them in the plugin config UI.
+
+**Advanced: explicit modifier mask (v28).** Use `RegisterKeybindCombo` only when you need the modifier mask passed back at fire time; most plugins should use `RegisterKeybindByName` instead.
+
+```cpp
+void OnComboFired(EModKey key, EModKeyModifiers mods, EModKeyEvent event) {
+    if (mods & EModKeyMod_Ctrl) { /* ... */ }
+}
+hooks->Input->RegisterKeybindCombo(EModKey::F5, EModKeyMod_Ctrl, EModKeyEvent::Pressed, &OnComboFired);
+hooks->Input->UnregisterKeybindCombo(EModKey::F5, EModKeyMod_Ctrl, EModKeyEvent::Pressed, &OnComboFired);
+```
 
 ---
 
@@ -697,7 +732,7 @@ Available enum values include F1-F12, A-Z, digit keys, navigation, modifier keys
 
 `IPluginUIEvents` -- ImGui panel and widget registration. **Client builds only. Always null-check.**
 
-All ImGui drawing is done through the `IModLoaderImGui` function table passed to your render callback. Do not call `ImGui::` directly from plugins.
+All ImGui drawing is done through the `IModLoaderImGui` function table passed to your render callback. Do not call `ImGui::` directly from plugins. `IModLoaderImGui` covers well over 150 functions (text, inputs, sliders/drags, tables, tabs, popups, tooltips, clip rects, mouse/item state queries, color utilities, and more) -- this guide only shows representative usage; see `IModLoaderImGui` in `plugin_interface.h` for the full, append-only list.
 
 **Panels** appear as buttons in the ModLoader Config tab and open a floating window when clicked:
 
@@ -739,9 +774,19 @@ void RenderMyWidget(IModLoaderImGui* imgui) {
     imgui->Text("Always visible overlay");
 }
 
-// Register in PluginInit
+// Register in PluginInit. windowHints is optional (nullptr = no size/position
+// hint); when set, lets you pin the widget's size/position and OR in extra
+// ImGuiWindowFlags (PluginWindowFlags_NoTitleBar, _NoResize, _NoMove,
+// _NoScrollbar, _NoBackground, _NoSavedSettings, _NoMouseInputs).
 if (hooks->UI) {
-    static PluginWidgetDesc wdesc = { "MyPlugin_Widget", &RenderMyWidget };
+    static PluginWindowHints hints = {
+        300.0f, 150.0f,  // width, height (0 = no size hint)
+        -1.0f, -1.0f,    // pos_x, pos_y (-1 = skip positioning)
+        0.0f, 0.0f,      // pivot_x, pivot_y
+        1, 1,            // size_cond, pos_cond (0 = Always, 1 = FirstUseEver)
+        PluginWindowFlags_NoTitleBar | PluginWindowFlags_NoResize
+    };
+    static PluginWidgetDesc wdesc = { "MyPlugin_Widget", &RenderMyWidget, &hints };
     g_widget = hooks->UI->RegisterWidget(&wdesc);
 }
 
@@ -770,6 +815,39 @@ if (hooks->UI) {
 // In PluginShutdown:
 if (hooks->UI) {
     hooks->UI->UnregisterOnConfigChanged(&OnConfigChanged);
+}
+```
+
+**Panel-closed notifications (v43)** fire whenever a panel window is closed, via the ImGui titlebar X button or via `SetPanelClose`:
+
+```cpp
+void OnPanelClosed(PanelHandle handle) {
+    if (handle == g_panel) { /* react to the user closing it */ }
+}
+if (hooks->UI) {
+    hooks->UI->RegisterOnPanelWindowClosed(&OnPanelClosed);
+}
+// In PluginShutdown:
+if (hooks->UI) {
+    hooks->UI->UnregisterOnPanelWindowClosed(&OnPanelClosed);
+}
+```
+
+**Input capture (v43)** lets a plugin suppress game mouse/keyboard input the same way an open panel/modloader window does -- useful for plugins driving their own UI via `RegisterWidget`, which doesn't trigger capture on its own. Reference-counted across all plugins via opaque tokens:
+
+```cpp
+static void* g_inputToken = nullptr;
+
+// Acquire while your widget needs exclusive input (e.g. a text field has focus)
+if (hooks->UI) {
+    g_inputToken = hooks->UI->AcquireInputCapture();
+}
+
+// Release when no longer needed -- ALWAYS release in PluginShutdown too,
+// a leaked token permanently suppresses input until the modloader restarts.
+if (hooks->UI && g_inputToken) {
+    hooks->UI->ReleaseInputCapture(g_inputToken);
+    g_inputToken = nullptr;
 }
 ```
 
@@ -895,6 +973,121 @@ Full list of available accessors:
 | `SpawnerDoSpawning()` | AMassSpawner::DoSpawning |
 | `HUDPostRender()` | AHUD::PostRender -- client only, 0 on server/generic |
 | `ClientMessageExec()` | Client message exec -- client only, 0 on server/generic |
+| `CraftingFinished()` | ACrCrafter::NativeOnItemCraftingComplete (v44). Cast to: `void(__fastcall*)(void* thisPtr, uint64_t entityHandle, uint64_t signalName)` |
+
+---
+
+#### hooks->Text
+
+`IPluginTextUtils` -- resolved native addresses for FText/FString conversion and localization key construction. Available on all builds.
+
+```cpp
+auto* text = hooks->Text;
+
+// Trampoline address of FText::AsLocalizable_Advanced, or 0 if not hooked.
+// Cast to: FText*(__fastcall*)(FText* result, const FTextKey* Namespace, const FTextKey* Key, const wchar_t* String)
+uintptr_t asLocalizableAddr = text->AsLocalizable_Advanced();
+
+// Resolved address of UKismetTextLibrary::Conv_TextToString, or 0 if not found.
+// Cast to: FString*(__fastcall*)(FString* result, const FText* InText)
+uintptr_t convToStringAddr = text->Conv_TextToString();
+
+// Trampoline address of FTextKey::FTextKey(const wchar_t*), or 0 if not hooked.
+// Use this to build the Namespace/Key arguments AsLocalizable_Advanced needs --
+// FTextKey is an interned-string-table index and cannot be constructed any other way.
+// Cast to: void(__fastcall*)(FTextKey* this, const wchar_t* InStr)
+uintptr_t makeTextKeyAddr = text->MakeTextKey();
+```
+
+---
+
+#### hooks->NetMode
+
+`IPluginNetModeInfo` -- network mode queries (v36). Available on **server and client builds**; `nullptr` on generic.
+
+```cpp
+if (hooks->NetMode) {
+    EPluginNetMode mode = hooks->NetMode->GetNetMode();
+    // EPluginNetMode::Standalone, DedicatedServer, ListenServer, Client, or Unknown
+    // (Unknown if not resolved yet, e.g. called before world begin play)
+
+    bool isMultiplayer = hooks->NetMode->IsMultiplayer(); // ListenServer or Client
+    bool isServer      = hooks->NetMode->IsServer();      // DedicatedServer or ListenServer
+}
+```
+
+---
+
+#### hooks->ImGuiTextures
+
+`IPluginImGuiTextures` -- load and render images without direct D3D12 access (v37). **Client builds only. Always null-check.**
+
+**Threading rule: `Load*` functions block on a GPU copy and must be called from a game-thread callback (`PluginInit`, `OnExperienceLoadComplete`, etc.) -- never from inside an ImGui render callback**, or the render thread stalls and can crash with DLSS/Streamline active.
+
+```cpp
+static PluginTextureHandle g_tex = nullptr;
+
+// Load once, from a game-thread callback (not the render callback)
+if (hooks->ImGuiTextures) {
+    g_tex = hooks->ImGuiTextures->LoadFromFile("C:\\path\\to\\icon.png", "MyIcon");
+    // Also available: LoadFromMemory(data, size, name), LoadFromRGBA(pixels, w, h, name),
+    // LoadFromUTexture2D(sdkTexture, name) -- copies an in-engine UTexture2D.
+    // All throw std::out_of_range if every slot is in use; check GetFreeSlotCount() first
+    // if you want to avoid the exception. Return NULL (no throw) if D3D12 isn't ready yet.
+}
+
+// Render from inside a panel/widget render callback
+void RenderMyPanel(IModLoaderImGui* imgui) {
+    if (g_tex) {
+        int w, h;
+        hooks->ImGuiTextures->GetSize(g_tex, &w, &h);
+        hooks->ImGuiTextures->Image(g_tex, 0, 0); // 0,0 = use natural size
+        if (hooks->ImGuiTextures->ImageButton("icon_btn", g_tex, 32, 32)) { /* clicked */ }
+    }
+}
+
+// Free in PluginShutdown (or whenever no longer needed; safe to call with NULL)
+if (hooks->ImGuiTextures && g_tex) {
+    hooks->ImGuiTextures->FreeTexture(g_tex);
+    g_tex = nullptr;
+}
+```
+
+Textures loaded with the same `name` (case-insensitive) share one GPU resource and are refcounted -- every successful `Load*` call must be paired with exactly one `FreeTexture` call. Capacity is currently 4096 slots (v45); query with `GetFreeSlotCount()` / `GetCapacity()`.
+
+---
+
+#### hooks->Splash
+
+`IPluginSplash` -- push status/progress feedback to the startup splash window during `PluginInit` (v40). **Client builds only. Always null-check.** All text is UTF-8; safe to call from any thread.
+
+```cpp
+if (hooks->Splash && hooks->Splash->IsVisible()) {
+    hooks->Splash->SetSubStatus("Loading MyPlugin assets...");
+    hooks->Splash->SetSubProgress(0.5f);
+}
+// Hide the secondary bar when done
+if (hooks->Splash) {
+    hooks->Splash->ClearSubBar();
+}
+```
+
+**Holding the splash open past normal startup (v41)** -- needed if you `PostToGameThread` async work during `PluginInit` that needs to keep updating the splash:
+
+```cpp
+bool PluginInit(IPluginSelf* self) {
+    if (self->hooks->Splash) {
+        self->hooks->Splash->AcquireSplashHold();
+    }
+    self->hooks->Engine->PostToGameThread([](void*) {
+        // ... async work, can call SetSubStatus/SetSubProgress here ...
+        GetHooks()->Splash->ReleaseSplashHold(); // exactly once, when done or on failure
+    }, nullptr);
+    return true;
+}
+```
+
+The init thread waits up to 30s for all holds to drain before closing the splash.
 
 ---
 
@@ -971,6 +1164,233 @@ Processing order for every incoming request:
 
 ---
 
+#### hooks->Crafting
+
+`IPluginCraftingEvents` -- fired whenever any crafting building finishes crafting an item (v44). Available on all builds.
+
+```cpp
+// crafter           : the ACrCrafter* (or subclass) that finished crafting, as void*
+// craftingComponent : the building's UCrCraftingComponent*, as void* (may be null)
+// entityIndex       : FMassEntityHandle::Index for the crafter's Mass entity
+// entitySerial      : FMassEntityHandle::SerialNumber for the crafter's Mass entity
+void OnCraftingFinished(void* crafter, void* craftingComponent, int32_t entityIndex, int32_t entitySerial) {
+    LOG_INFO("Crafting finished: crafter=%p entity=(%d,%d)", crafter, entityIndex, entitySerial);
+}
+hooks->Crafting->RegisterOnCraftingFinished(&OnCraftingFinished);
+hooks->Crafting->UnregisterOnCraftingFinished(&OnCraftingFinished); // call in PluginShutdown
+```
+
+Fires for any crafting building type -- Crafter, Forge, Refinery, Factory, Assembler, Exporter, FoodProcessor, ItemPrinter, etc.
+
+---
+
+#### hooks->ObjectWalker
+
+`IPluginObjectWalker` -- walks `SDK::UObject::GObjects` on demand and lets you find objects by class/object name and invoke a `UFunction` on one by name via `ProcessEvent` (v47). Available on all builds.
+
+**On-demand only:** there is no hook into UObject construction, so nothing fires live as objects spawn -- every call walks GObjects synchronously (tens of thousands of entries) and you are responsible for caching results, not calling these every tick.
+
+**Caller-buffer API:** `WalkAllObjectsInto`, `FindObjectsByClassNameInto`, and `FindObjectsByNameInto` fill a plugin-owned `PluginObjectInfo` array you pass in -- nothing is allocated by the modloader, so no memory crosses the DLL boundary in either direction (same pattern as `IPluginScanner`'s `FindAllPatternsInMainModule`). Each returns the **total** match count, which may exceed the buffer's `capacity` if there were more matches than you had room for; compare the return value against `capacity` to detect truncation and re-call with a bigger buffer if you need every match.
+
+**Lookup mode:** every find/walk function takes a `PluginObjectLookupMode` so you don't need to know raw `EObjectFlags` bit values to skip template objects:
+
+```cpp
+enum PluginObjectLookupMode : int32_t {
+    PluginObjectLookup_Both         = 0, // CDOs, archetypes, and live instances
+    PluginObjectLookup_InstanceOnly = 1, // skips ClassDefaultObject + ArchetypeObject -- use this to find a real spawned instance
+    PluginObjectLookup_CDOOnly      = 2, // only the ClassDefaultObject
+};
+```
+
+```cpp
+if (!hooks->ObjectWalker->IsReady()) return; // gate everything on this (true after EngineInit)
+
+// Find the first live instance of a class by its short name. FindFirstObjectByName
+// matches by FName, not class -- for class-based lookup use FindObjectsByClassNameInto
+// with capacity 1 if you only need the first hit.
+void* obj = hooks->ObjectWalker->FindFirstObjectByName("CrSaveSubsystem");
+
+// Find up to 16 live (non-CDO, non-archetype) instances of a class by short name.
+PluginObjectInfo results[16];
+int total = hooks->ObjectWalker->FindObjectsByClassNameInto(
+    "PlayerState", PluginObjectLookup_InstanceOnly, results, 16);
+
+for (int i = 0; i < total && i < 16; ++i) {
+    LOG_INFO("Found %s (object=%p, flags=0x%08X)",
+        results[i].className, results[i].object, results[i].objectFlags);
+}
+if (total > 16) {
+    LOG_WARN("FindObjectsByClassNameInto truncated: %d matches, only room for 16", total);
+}
+
+// Walk literally everything (expensive -- cache results, don't call per-tick).
+// Pass nullptr/0 to just get a count first, then size your buffer.
+int count = hooks->ObjectWalker->WalkAllObjectsInto(PluginObjectLookup_Both, nullptr, 0);
+
+// Invoke a UFunction by name via ProcessEvent. paramsBuffer must already match
+// the target UFunction's native Params struct layout exactly -- no marshaling
+// is performed (pass nullptr for a void(), no-param UFunction).
+bool ok = hooks->ObjectWalker->InvokeUFunctionByName(obj, "CrSaveSubsystem", "SomeFunction", nullptr);
+
+// Resolve once, call many times -- avoids repeated by-name lookups in a loop
+void* fn = hooks->ObjectWalker->ResolveUFunction("CrSaveSubsystem", "SomeFunction");
+if (fn) {
+    hooks->ObjectWalker->InvokeResolvedUFunction(obj, fn, nullptr);
+}
+```
+
+`PluginObjectInfo` fields: `object` (`void*`), `className` (`char[128]`, truncated if longer), `objectName` (`char[256]`, truncated if longer), `nameNumber`, `objectFlags`, `objectIndex`. `className`/`objectName` are fixed buffers, not pointers -- safe to read any time after the call returns, unlike a pointer into a temporary.
+
+---
+
+#### hooks->Delegate
+
+`IPluginDelegateHook` -- splices a synthetic UFunction into an existing UE5 multicast delegate (e.g. `SDK::UCrSaveSubsystem::OnAfterSave`) so your plugin gets a callback when it broadcasts, without the modloader needing a dedicated hand-written hook for every delegate someone might want. Available on all builds.
+
+It works by cloning an existing native `UFunction` (used purely as a safe field-layout template -- its actual behavior is irrelevant and never invoked), giving the clone a private synthetic name, and resolving that name through a hook on `UClass::FindFunctionByName`. No real `UClass`'s function table is ever modified, so nothing else that resolves the same real function name is affected. Multiple hooks -- even several on the exact same delegate -- can be active at once, each with its own handle.
+
+Callbacks are deliberately parameterless: `PluginDelegateCallback` only receives `userContext`, not the delegate's broadcast arguments.
+
+```cpp
+static IPluginSelf* g_self = nullptr;
+static DelegateHookHandle g_saveHookHandle = 0;
+
+// Fires every time the host object's delegate broadcasts. userContext is
+// whatever you passed to Hook() -- handed back unchanged, useful for
+// telling apart multiple registrations that share one callback.
+void OnAfterSaveFired(void* userContext)
+{
+    LOG_INFO("Save completed!");
+}
+
+bool PluginInit(IPluginSelf* self)
+{
+    g_self = self;
+
+    // Find the live CrSaveSubsystem instance (a GameInstanceSubsystem --
+    // always exists once the game world is up).
+    void* saveSubsystem = self->hooks->ObjectWalker->FindFirstObjectByName("CrSaveSubsystem");
+    if (!saveSubsystem) {
+        LOG_WARN("CrSaveSubsystem not found yet");
+        return true; // not fatal -- just couldn't hook this time
+    }
+
+    // delegatePtr must point directly at the TMulticastInlineDelegate<...>
+    // member itself (compute its address from the class's known field offset).
+    void* delegatePtr = static_cast<uint8_t*>(saveSubsystem) + 0x188; // OnAfterSave offset
+
+    // hostClassName/hostFuncName are optional -- pass nullptr for both (as
+    // here) to use the modloader's built-in template UFunction. You only
+    // need to supply your own if you have a specific reason not to depend
+    // on the built-in default.
+    g_saveHookHandle = self->hooks->Delegate->Hook(
+        delegatePtr,
+        saveSubsystem,
+        nullptr,    // hostClassName -- use modloader's built-in template
+        nullptr,    // hostFuncName
+        &OnAfterSaveFired,
+        nullptr);   // userContext
+
+    if (g_saveHookHandle)
+        LOG_INFO("Hooked OnAfterSave");
+    else
+        LOG_ERROR("Failed to hook OnAfterSave");
+
+    return true;
+}
+
+void PluginShutdown()
+{
+    if (g_saveHookHandle) {
+        g_self->hooks->Delegate->Unhook(g_saveHookHandle);
+        g_saveHookHandle = 0;
+    }
+}
+```
+
+Key points:
+- `Hook()` returns `0` on failure, a non-zero `DelegateHookHandle` on success -- always check it.
+- `delegatePtr` must point at the live `TMulticastInlineDelegate<...>` member itself, not the owning object.
+- `hostObject` is whatever object the delegate will report as broadcasting on -- typically the same object `delegatePtr` lives inside.
+- `hostClassName`/`hostFuncName` are optional -- pass `nullptr` for both to use the modloader's built-in template `UFunction`. Only supply your own if you have a specific reason not to depend on the built-in default.
+- Always `Unhook()` in `PluginShutdown` -- the splice lives in the engine's live `InvocationList`, so a leaked hook keeps firing into freed plugin memory after unload.
+- `IsHooked(handle)` returns whether a handle is still active.
+
+---
+
+#### hooks->ObjectProperties
+
+`IPluginObjectProperties` -- resolves a `UPROPERTY`/`FProperty` by class name + property name, then reads/writes it through typed accessors (v47). Available on all builds.
+
+**Why this exists:** every time the game updates and the SDK is re-dumped with Dumper-7, struct field offsets can shift. Code that does `reinterpret_cast<SDK::SomeClass*>(ptr)->SomeField` bakes that offset in at compile time -- a shifted offset means a recompile. `hooks->ObjectProperties` instead looks up the property by **name** against the live `UClass`'s reflection metadata every call, so the offset is always read fresh from the running build. As long as the property's name doesn't change, your plugin does not need to be recompiled after a game update.
+
+This only covers properties with a `UPROPERTY`/`FProperty` entry in the engine's reflection system. Plain native C++ members with no reflection metadata (no `UPROPERTY`) cannot be looked up by name here and still need a hand-derived raw offset.
+
+**Resolve once, use many times:**
+
+```cpp
+// By class name + property name (walks the class's property list + SuperStruct chain)
+PluginPropertyHandle pingProp = hooks->ObjectProperties->FindPropertyByName("PlayerState", "CompressedPing");
+
+// Or directly from a live object (skips the by-name class lookup)
+PluginPropertyHandle pingProp2 = hooks->ObjectProperties->FindPropertyOnObject(playerStateObj, "CompressedPing");
+
+if (!pingProp) { LOG_WARN("CompressedPing property not found"); return; }
+```
+
+**Typed getters/setters** validate the property's reflection type before touching memory and return `false` on a mismatch:
+
+```cpp
+bool ok;
+int64_t pingValue = 0;
+ok = hooks->ObjectProperties->GetIntProperty(playerStateObj, pingProp, &pingValue);
+
+double health = 0.0;
+hooks->ObjectProperties->GetFloatProperty(actorObj, healthProp, &health);   // FloatProperty or DoubleProperty
+hooks->ObjectProperties->SetFloatProperty(actorObj, healthProp, 100.0);
+
+bool isDead = false;
+hooks->ObjectProperties->GetBoolProperty(actorObj, isDeadProp, &isDead);    // handles packed bitfield bools correctly
+
+void* owner = nullptr;
+hooks->ObjectProperties->GetObjectProperty(actorObj, ownerProp, &owner);    // raw-pointer UObject* properties only
+
+char name[256];
+hooks->ObjectProperties->GetStringProperty(playerStateObj, nameProp, name, sizeof(name)); // FString -- read-only
+hooks->ObjectProperties->GetNameProperty(objectObj, fnameProp, name, sizeof(name));        // FName -- read-only
+```
+
+`GetIntProperty`/`SetIntProperty` handle any signed/unsigned integer width (Byte/Int8/Int16/UInt16/Int32/UInt32/Int64/UInt64) and widen/narrow through `int64_t`. String and Name properties are **read-only**: `FString`/`FName` own their own backing storage, and writing one in place safely needs the engine's own string allocator, which is out of scope here.
+
+**Querying a property's type and size** -- useful when you don't know ahead of time what kind of property you resolved:
+
+```cpp
+PluginPropertyKind kind = hooks->ObjectProperties->GetPropertyKind(pingProp);
+// PluginPropertyKind::Bool, Int, Float, Name, Str, Object, Struct, Array, Enum, Unsupported, Unknown
+
+size_t size = hooks->ObjectProperties->GetPropertySize(pingProp);       // ElementSize * ArrayDim
+int32_t arrayDim = hooks->ObjectProperties->GetPropertyArrayDim(pingProp);
+
+// Struct-typed properties: get the nested type's class name to recurse FindPropertyByName on it
+char structTypeName[128];
+if (hooks->ObjectProperties->GetPropertyStructTypeName(someStructProp, structTypeName, sizeof(structTypeName))) {
+    PluginPropertyHandle innerProp = hooks->ObjectProperties->FindPropertyByName(structTypeName, "InnerField");
+}
+```
+
+**Raw escape hatch** for property kinds with no typed accessor above (Array/Map/Set/Delegate/Enum/...) -- you do your own typed read at the returned pointer:
+
+```cpp
+void* raw = hooks->ObjectProperties->GetPropertyRawPtr(containerObj, someProp);
+if (raw) {
+    // e.g. for an ArrayProperty, raw points at the TArray<T> itself
+}
+```
+
+`hooks->ObjectProperties->IsReady()` mirrors `hooks->ObjectWalker->IsReady()` -- gate all calls on it returning `true` (becomes true after `EngineInit`).
+
+---
+
 ## Interface Version Changelog
 
 The loader accepts plugins whose `interfaceVersion` is in `[PLUGIN_INTERFACE_VERSION_MIN, PLUGIN_INTERFACE_VERSION_MAX]`. All interface structs are append-only so older plugins still load without recompilation as long as they are within the supported range.
@@ -999,8 +1419,28 @@ The loader accepts plugins whose `interfaceVersion` is in `[PLUGIN_INTERFACE_VER
 | v20     | no          | Added `RegisterOnBeforeWorldEndPlay` / `UnregisterOnBeforeWorldEndPlay` and `RegisterOnAfterWorldEndPlay` / `UnregisterOnAfterWorldEndPlay` to `IPluginWorldEvents`. Callback type: `PluginWorldEndPlayCallback(UWorld* world, const char* worldName)`. |
 | v21     | no          | Added `IPluginNativePointers` and `hooks->NativePointers` (all builds). Exposes the resolved addresses of every function the modloader hooks internally so plugins can install secondary hooks or validate pattern scan results without re-scanning. |
 | v22     | no          | Added `IPluginHttpServer` and `hooks->HttpServer` (server only; nullptr on client/generic). Provides static-file routes (`AddRoute`/`RemoveRoute`), raw-request filter hooks (`RegisterOnRawRequest`/`UnregisterOnRawRequest`), and raw-response routes (`AddRawRoute`/`RemoveRawRoute`). URL scheme: `/<pluginName>/<routeName>/...` (case-insensitive). Static files served from `<exe_dir>\Plugins\<pluginName>\<folderName>\`. |
+| v23     | no          | SR game hotfix update; interface bump only, no API changes. |
+| v24     | no          | Added scaling/metrics functions to `IModLoaderImGui` (`GetFontSize`, `GetTextLineHeight`, `GetTextLineHeightWithSpacing`, `GetFrameHeight`, `GetFrameHeightWithSpacing`, `CalcTextSize`, `SetWindowFontScale`, `GetContentRegionAvail`, `GetDisplaySize`). Added `PluginWindowHints` struct and `windowHints` field to `PluginWidgetDesc`. |
+| v25-30  | --          | *(not individually documented in `plugin_interface.h`'s changelog comments -- likely quiet game-update-only bumps; MIN had reached 26 by the time v31 landed.)* |
+| v31     | no          | Added `extra_window_flags` to `PluginWindowHints`, letting plugins OR additional `ImGuiWindowFlags` (e.g. `NoTitleBar`, `NoResize`) into a registered widget window. `0` = unchanged default behaviour. |
+| v32     | no          | Added `IPluginClientSessionInfo` (client only, null on server/generic) -- `GetSessionOnlineMode`, `IsMultiplayer`, `IsServer`. *(Replaced by `IPluginNetModeInfo` in v36, see below.)* |
+| v33     | no          | Added `pluginTarget` field to `PluginInfo`. Every plugin must now declare `PLUGIN_TARGET_CLIENT` or `PLUGIN_TARGET_SERVER`; the loader rejects plugins that don't match the current build target. |
+| v34     | no          | Game update; interface bump only, no API changes. |
+| v35     | no          | Added layout/sidebar functions to `IModLoaderImGui`: `BeginChild`/`EndChild`, style color/var push/pop, `PushItemWidth`/`PopItemWidth`, cursor X get/set, `BeginTable`/`TableNextColumn`/`EndTable`, `IsItemClicked`, `GetWindowWidth`/`GetWindowHeight`, `Dummy`. Wired up `SetWindowFontScale` (previously declared but not populated). Followed by a mass expansion of ~100 more `IModLoaderImGui` functions (window queries, scroll, groups, extended cursor control, all drag/slider variants, listbox, tab bar, menus, popups, tooltips, full table API, item state predicates, disabled regions, clip rect, mouse queries, color utilities, misc helpers). Also added `MakeTextKey` to `IPluginTextUtils` (trampoline for `FTextKey::FTextKey`, needed to build the `Namespace`/`Key` arguments `AsLocalizable_Advanced` requires). |
+| v36     | no          | Replaced `IPluginClientSessionInfo` with `IPluginNetModeInfo` (`hooks->NetMode`, server + client, null on generic) -- network-mode queries via an AOB-resolved trampoline to `AActor::InternalGetNetMode`, exposed through the new `EPluginNetMode` enum. Added object/package lookup address resolvers to `IPluginEngineEvents`: `GetStaticFindObjectByPathAddress`, `GetStaticFindObjectByNameAddress`, `GetStaticFindObjectSafeByPathAddress`, `GetStaticFindObjectSafeByNameAddress`, `GetStaticFindObjectFastAddress`, `GetFindPackageAddress`, `GetPackageFullyLoadAddress`, `GetLoadPackageAddress`, `GetAssetDataFastGetAssetAddress`. |
+| v37     | no          | Added `IPluginImGuiTextures` (`hooks->ImGuiTextures`, client only, null on server/generic). Load images from file, memory, raw RGBA, or a live `SDK::UTexture2D*`, and render via `Image`/`ImageButton` without direct D3D12 access. Up to 64 textures live at once. |
+| v38     | no          | `IPluginImGuiTextures` texture slot cap raised 64 -> 2048. Added `GetFreeSlotCount()`, `GetCapacity()`. `Load*` functions now throw `std::out_of_range` when all slots are in use (previously returned `nullptr` silently). `LoadFromUTexture2D` now gates on `FD3D12Resource::DefaultResourceState` -- returns `nullptr` (no throw) while streaming is still in flight. |
+| v39     | no          | All `Load*` functions now take a mandatory `name` parameter (logged on render and on load errors). `LoadFromUTexture2D` now copies the engine texture to a modloader-owned resource so the handle survives engine GC/eviction -- plugins must call `FreeTexture` when done; handles are no longer auto-expired each frame. |
+| v40     | no          | Added `IPluginSplash` (`hooks->Splash`, client only, null on server/generic). Lets plugins push status/progress to the startup splash window during `PluginInit`: `SetStatus`, `SetProgress`, `SetSubStatus`, `SetSubProgress`, `ClearSubBar`. Safe to call from `PluginInit`; no-ops on server/generic. |
+| v41     | no          | Added `AcquireSplashHold` / `ReleaseSplashHold` to `IPluginSplash`. Lets a plugin that calls `PostToGameThread` during `PluginInit` keep the splash open until that async work completes. The init thread waits up to 30s for all holds to drain before closing the splash. |
+| v42     | no          | Game update; interface bump only, no API changes. |
+| v43     | no          | Added `IPluginUIEvents::RegisterOnPanelWindowClosed` / `UnregisterOnPanelWindowClosed` -- fires `PluginPanelClosedCallback(handle)` when a panel window is closed (titlebar X or `SetPanelClose`). Added `IPluginUIEvents::AcquireInputCapture` / `ReleaseInputCapture` -- lets any plugin request that the modloader suppress game mouse/keyboard input, independent of panel/widget state. Reference-counted via opaque tokens; input stays suppressed until every acquired token is released. |
+| v44     | no          | Added `IPluginCraftingEvents` (`hooks->Crafting`) -- `RegisterOnCraftingFinished` / `UnregisterOnCraftingFinished`, fired whenever any crafting building (Crafter, Forge, Refinery, Factory, Assembler, Exporter, FoodProcessor, ItemPrinter, etc.) finishes crafting an item. Callback receives the crafter, its crafting component (may be null), and its Mass entity handle index/serial. Added `CraftingFinished()` to `IPluginNativePointers`. Appended at the end of `IPluginHooks` to preserve layout for v42/v43 plugins. |
+| v45     | no          | `IPluginImGuiTextures` texture slot cap raised 2048 -> 4096. Textures are now shared and refcounted by name (case-insensitive): a `Load*` call matching an already-loaded, in-use texture reuses the existing GPU resource and increments its refcount instead of creating a new copy. Every successful `Load*` call must still be paired with exactly one `FreeTexture` call; the resource is only released once the refcount reaches zero. |
+| v46     | **yes**     | Game update; MIN/MAX both bumped to 46. |
+| v47     | no          | Added `IPluginObjectWalker` (`hooks->ObjectWalker`, all builds) -- walks `SDK::UObject::GObjects` on demand, finds objects by class/object name, and invokes a `UFunction` on one by name via `ProcessEvent`. On-demand only (no hook into UObject construction); callers must trigger a walk and cache results. `WalkAllObjectsInto`/`FindObjectsByClassNameInto`/`FindObjectsByNameInto` fill a plugin-owned `PluginObjectInfo` buffer (no allocation crosses the DLL boundary) and return the total match count, which may exceed `capacity` if truncated. Each also takes a `PluginObjectLookupMode` (`Both`/`InstanceOnly`/`CDOOnly`) to filter `ClassDefaultObject`/`ArchetypeObject` entries out of `GObjects` without the caller needing to know raw `EObjectFlags` bit values. `PluginObjectInfo.className`/`objectName` are fixed-size char buffers, not pointers, since the array is read after the call returns. `InvokeUFunctionByName`/`InvokeResolvedUFunction` perform no parameter marshaling -- `paramsBuffer` must already match the target UFunction's native Params layout. Also added `IPluginDelegateHook` (`hooks->Delegate`, all builds) -- splices a synthetic UFunction into an existing UE5 multicast delegate (e.g. `OnAfterSave`) so plugins can react to it without a dedicated modloader-side hook module. Never touches a real `UClass`'s function table, so other code resolving the same function name by name is unaffected. Multiple concurrent hooks, including several on the same delegate, are supported via opaque `DelegateHookHandle` values. Callbacks are parameterless (`userContext` only). Also added `IPluginObjectProperties` (`hooks->ObjectProperties`, all builds) -- resolves a `UPROPERTY`/`FProperty` by class name + property name (walks the class's reflected property list + `SuperStruct` chain) and reads/writes it through typed accessors (`GetBoolProperty`/`GetIntProperty`/`GetFloatProperty`/`GetObjectProperty` + setters, `GetStringProperty`/`GetNameProperty` read-only, `GetPropertyRawPtr` escape hatch). Because the property's offset is resolved fresh against the running build's reflection metadata on every call, a game update that reshuffles struct layout does not require recompiling a plugin that goes through this interface -- only the property's *name* needs to stay the same. Does not cover plain native C++ members with no `UPROPERTY` entry. All three structs appended at the end of `IPluginHooks`. |
 
-The current `PLUGIN_INTERFACE_VERSION_MIN` is **19** and `PLUGIN_INTERFACE_VERSION_MAX` is **22**.
+The current `PLUGIN_INTERFACE_VERSION_MIN` is **46** and `PLUGIN_INTERFACE_VERSION_MAX` is **47** (see `plugin_interface.h` for the authoritative value and full per-version changelog comments).
 
 ---
 
