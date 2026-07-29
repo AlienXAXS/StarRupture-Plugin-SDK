@@ -854,6 +854,35 @@ if (hooks->UI && g_inputToken) {
 }
 ```
 
+**Cooperative input passthrough (v51)** is the other half of that pair. `AcquireInputCapture` is all-or-nothing: while a token is held the game gets no mouse or keyboard input at all. That is right for a modal settings window and wrong for an always-on widget UI the player is supposed to keep playing underneath -- a timeline editor, a build planner, an overlay with draggable handles. Those freeze the player out until the window closes.
+
+A **passthrough** token puts the modloader in cooperative mode instead. ImGui still receives every message and still draws and owns the cursor, but the game is only cut out of the input classes ImGui actually wants that frame:
+
+| Input | Reaches the game in cooperative mode? |
+|---|---|
+| Mouse, cursor over an ImGui window or dragging a widget | No (`io.WantCaptureMouse`) |
+| Mouse, cursor over the world | Yes |
+| Keyboard, an ImGui text field has focus | No (`io.WantCaptureKeyboard` / `WantTextInput`) |
+| Keyboard, nothing focused | Yes |
+| `WM_INPUT` raw mouse deltas (UE5 camera look) | Yes, unless the cursor is over an ImGui window |
+
+```cpp
+static void* g_passthroughToken = nullptr;
+
+// Acquire when your always-on UI appears
+if (hooks->UI) {
+    g_passthroughToken = hooks->UI->AcquireInputPassthrough();
+}
+
+// Release when it goes away -- and always in PluginShutdown
+if (hooks->UI && g_passthroughToken) {
+    hooks->UI->ReleaseInputPassthrough(g_passthroughToken);
+    g_passthroughToken = nullptr;
+}
+```
+
+Exclusive capture always wins. While the modloader window, any plugin panel, or any `AcquireInputCapture` token is active, passthrough tokens have no effect and everything behaves exactly as it did before v51. Tokens are reference-counted across all plugins just like capture tokens, and a leaked one keeps the cursor visible until the modloader restarts.
+
 **Direct draw lists (v48)** give you `ImDrawList`-level drawing from inside a panel or widget callback, for anything the widget API can't express -- custom gauges, minimap overlays, connector lines between widgets, full-screen HUD annotations.
 
 Three lists are available on the `IModLoaderImGui` table passed to your render callback:
@@ -1027,7 +1056,7 @@ void OnObjectiveFound(PluginDebugVector location) {
 | `DrawFrustum` | Takes a `PluginDebugTransform` |
 | `DrawCamera` | Pass an `SDK::ACameraActor*`; reads its transform and its camera component's FOV |
 | `DrawCameraAt` | Same geometry from an explicit location/rotation/FOV, no actor lookup |
-| `DrawString` | Canvas-space text pinned to a world location |
+| `DrawString` | Canvas-space text pinned to a world location; trailing `fontScale` sets the size |
 | `DrawFloatHistoryTransform` / `DrawFloatHistoryLocation` | Graph of a sample array; frame + polyline |
 | `FlushPersistentLines` | Clears both persistent batchers |
 | `ClearAllStrings` | Clears world-anchored debug strings |
@@ -1038,8 +1067,20 @@ void OnObjectiveFound(PluginDebugVector location) {
 PluginDebugVector at    = { 1000.0, 2000.0, 450.0 };
 PluginDebugColor  white = { 1.0f, 1.0f, 1.0f, 1.0f };
 
-dd->DrawString(&at, "Objective", nullptr, &white, 10.0f);   // 10 seconds
-dd->DrawString(&at, "Objective", nullptr, &white, -1.0f);   // permanent
+//              location  text          baseActor  color   duration  fontScale
+dd->DrawString(&at, "Objective", nullptr, &white,   10.0f,    1.0f);  // 10 seconds
+dd->DrawString(&at, "Objective", nullptr, &white,   -1.0f,    1.0f);  // permanent
+dd->DrawString(&at, "Objective", nullptr, &white,   -1.0f,    2.0f);  // twice the size
+```
+
+**Text size.** The trailing `fontScale` is a direct multiplier -- the engine assigns it straight to the canvas text item's scale, with no distance falloff and no clamping, so `2.0f` is exactly twice the size whether the text is 5m or 500m away. `1.0f` is the default (the engine's small font at native size), and anything `<= 0` is treated as `1.0f` so a zeroed struct can't render invisible text. The typeface itself is fixed to the engine's small font and isn't selectable.
+
+Because the size is range-independent, text on a distant object stays small on screen. If you want it legible at distance, scale it yourself against the camera distance:
+
+```cpp
+float dist  = DistanceToCamera(at);
+float scale = 1.0f + (dist / 5000.0f);   // tune to taste
+dd->DrawString(&at, "Objective", nullptr, &white, 0.0f, scale);
 ```
 
 Debug strings are independent of the line batchers -- `FlushPersistentLines` does not clear them, `ClearAllStrings` does.
@@ -1616,6 +1657,7 @@ The loader accepts plugins whose `interfaceVersion` is in `[PLUGIN_INTERFACE_VER
 | v48     | no          | Added `ImDrawList` direct-drawing access to `IModLoaderImGui`, appended at the end of the struct so existing v34+ plugins keep working unchanged. `GetWindowDrawList`/`GetBackgroundDrawList`/`GetForegroundDrawList` return an opaque `PluginDrawList` (== `ImDrawList*`) handle valid for the **current frame only** -- never cache it. Covers shape primitives (`DL_AddLine`, `DL_AddRect(Filled)`, `DL_AddRectFilledMultiColor`, `DL_AddQuad(Filled)`, `DL_AddTriangle(Filled)`, `DL_AddCircle(Filled)`, `DL_AddNgon(Filled)`, `DL_AddEllipse(Filled)`), text (`DL_AddText`, `DL_AddTextSized`), curves and polys (`DL_AddPolyline`, `DL_AddConvexPolyFilled`, `DL_AddBezierCubic`, `DL_AddBezierQuadratic`), images via the existing `PluginTextureHandle` (`DL_AddImage`, `DL_AddImageQuad`, `DL_AddImageRounded`), the stateful `DL_Path*` builder API, and a draw-list-local clip rect stack. Colors are packed `0xAABBGGRR` `ImU32` values -- build them with the existing `GetColorU32FromVec4`/`GetColorU32FromCol` helpers. |
 | v49     | **yes**     | **Breaking signature change.** `IPluginUIEvents::RegisterOnConfigChanged` / `UnregisterOnConfigChanged` now take a leading `const IPluginSelf* self` parameter, matching the self-first convention already used by `IPluginLogger` and `IPluginConfig`. Pass the pointer received in `PluginInit`. The modloader uses it to scope `FireConfigChanged`, so a plugin's callback now fires only for edits to its own config file instead of broadcasting every plugin's config changes to every listener. MIN bumped to 49. |
 | v50     | no          | Added `IPluginDebugDraw`, reached as `hooks->HUD->DebugDraw` (client only -- the whole HUD interface is null on server/generic). Reimplements all sixteen `UKismetSystemLibrary::DrawDebug*` nodes, which are dead on shipping builds: `ENABLE_DRAW_DEBUG` is 0, so every body compiled away to nothing and only the `exec` thunks survive, parsing their parameters off the `FFrame` and returning without drawing. The `DrawDebugType` pin on the trace nodes is inert for the same reason. The renderer is still alive -- `UWorld::LineBatchers[4]` (all four `NewObject`'d and registered by `UWorld::UpdateWorldComponents`) and `ULineBatchComponent::DrawLines` -- so the modloader builds the same geometry and hands it to the engine's own batchers. Covers `DrawLine`, `DrawPoint`, `DrawCircle`, `DrawSphere`, `DrawBox`, `DrawCapsule`, `DrawCylinder`, `DrawConeInDegrees`, `DrawArrow`, `DrawCoordinateSystem`, `DrawPlane`, `DrawFrustum`, `DrawCamera` (both an `ACameraActor*` form and a location/rotation/FOV form), `DrawString`, `DrawFloatHistoryTransform`, `DrawFloatHistoryLocation`, plus `FlushPersistentLines` and `ClearAllStrings`. Callable from any thread -- the wrappers copy every argument and defer to the game thread when needed, so drawing from an ImGui panel callback (which runs on the render thread) just works. Two primitives deviate from the engine because only `DrawLines` survived as an out-of-line function: `DrawPoint` is a three-axis cross, and `DrawPlane` / the float-history graphs draw outlines instead of filled quads. The new field is appended at the end of `IPluginHUDEvents` and all the geometry structs are new, so nothing existing shifts: MIN remains 49. |
+| v51     | no          | Added `IPluginUIEvents::AcquireInputPassthrough` / `ReleaseInputPassthrough` -- a cooperative counterpart to the v43 capture tokens. A capture token is all-or-nothing and freezes the game entirely, which is wrong for an always-on widget UI the player is meant to keep playing underneath. A passthrough token feeds ImGui every message and lets it draw and own the cursor, but only cuts the game out of the input classes ImGui actually wants that frame -- mouse while the cursor is over an ImGui window (`io.WantCaptureMouse`), keyboard while a text field has focus (`io.WantCaptureKeyboard`/`WantTextInput`). Everything else, including the `WM_INPUT` raw-mouse deltas UE5 uses for camera look, still reaches the game. Exclusive capture always wins, so behaviour with any modloader window, plugin panel or v43 token active is unchanged. Appended at the end of `IPluginUIEvents`: MIN remains 49. |
 
 The current `PLUGIN_INTERFACE_VERSION_MIN` is **49** and `PLUGIN_INTERFACE_VERSION_MAX` is **50** (see `plugin_interface.h` for the authoritative value and full per-version changelog comments).
 
