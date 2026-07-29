@@ -21,27 +21,28 @@ This guide covers building the mod loader from source, creating new plugins, the
    - [IPluginConfig](#ipluginconfig)
    - [IPluginScanner](#ipluginscanner)
    - [IPluginHooks -- Sub-Interfaces](#ipluginhooks----sub-interfaces)
-     - [hooks->Engine (IPluginEngineEvents)](#hooksengine)
-     - [hooks->World (IPluginWorldEvents)](#hooksworld)
-     - [hooks->Players (IPluginPlayerEvents)](#hookplayers)
-     - [hooks->Actors (IPluginActorEvents)](#hooksactors)
-     - [hooks->Spawner (IPluginSpawnerHooks)](#hooksspawner)
-     - [hooks->Hooks (IPluginHookUtils)](#hookshooks)
-     - [hooks->Memory (IPluginMemoryUtils)](#hooksmemory)
-     - [hooks->Input (IPluginInputEvents) -- Client only](#hooksinput)
-     - [hooks->UI (IPluginUIEvents) -- Client only](#hooksui)
-     - [hooks->HUD (IPluginHUDEvents) -- Client only](#hookshud)
-     - [hooks->Network (IPluginNetworkChannel) -- Server + Client](#hooksnetwork)
-     - [hooks->NativePointers (IPluginNativePointers)](#hooksnativepointers)
-     - [hooks->Text (IPluginTextUtils)](#hookstext)
-     - [hooks->NetMode (IPluginNetModeInfo) -- Server + Client](#hooksnetmode)
-     - [hooks->ImGuiTextures (IPluginImGuiTextures) -- Client only](#hooksimguitextures)
-     - [hooks->Splash (IPluginSplash) -- Client only](#hooksplash)
-     - [hooks->HttpServer (IPluginHttpServer) -- Server only](#hookshttpserver)
-     - [hooks->Crafting (IPluginCraftingEvents)](#hookscrafting)
-     - [hooks->ObjectWalker (IPluginObjectWalker)](#hooksobjectwalker)
-     - [hooks->Delegate (IPluginDelegateHook)](#hooksdelegate)
-     - [hooks->ObjectProperties (IPluginObjectProperties)](#hooksobjectproperties)
+     - [hooks->Engine (IPluginEngineEvents)](#hooks-engine)
+     - [hooks->World (IPluginWorldEvents)](#hooks-world)
+     - [hooks->Players (IPluginPlayerEvents)](#hooks-players)
+     - [hooks->Actors (IPluginActorEvents)](#hooks-actors)
+     - [hooks->Spawner (IPluginSpawnerHooks)](#hooks-spawner)
+     - [hooks->Hooks (IPluginHookUtils)](#hooks-hooks)
+     - [hooks->Memory (IPluginMemoryUtils)](#hooks-memory)
+     - [hooks->Input (IPluginInputEvents) -- Client only](#hooks-input)
+     - [hooks->UI (IPluginUIEvents) -- Client only](#hooks-ui)
+     - [hooks->HUD (IPluginHUDEvents) -- Client only](#hooks-hud)
+     - [hooks->HUD->DebugDraw (IPluginDebugDraw) -- Client only](#hooks-hud-debugdraw)
+     - [hooks->Network (IPluginNetworkChannel) -- Server + Client](#hooks-network)
+     - [hooks->NativePointers (IPluginNativePointers)](#hooks-nativepointers)
+     - [hooks->Text (IPluginTextUtils)](#hooks-text)
+     - [hooks->NetMode (IPluginNetModeInfo) -- Server + Client](#hooks-netmode)
+     - [hooks->ImGuiTextures (IPluginImGuiTextures) -- Client only](#hooks-imguitextures)
+     - [hooks->Splash (IPluginSplash) -- Client only](#hooks-splash)
+     - [hooks->HttpServer (IPluginHttpServer) -- Server only](#hooks-httpserver)
+     - [hooks->Crafting (IPluginCraftingEvents)](#hooks-crafting)
+     - [hooks->ObjectWalker (IPluginObjectWalker)](#hooks-objectwalker)
+     - [hooks->Delegate (IPluginDelegateHook)](#hooks-delegate)
+     - [hooks->ObjectProperties (IPluginObjectProperties)](#hooks-objectproperties)
 7. [Interface Version Changelog](#interface-version-changelog)
 8. [Troubleshooting](#troubleshooting)
 
@@ -810,13 +811,15 @@ void OnConfigChanged(const char* section, const char* key, const char* newValue)
     LOG_INFO("Config changed: [%s] %s = %s", section, key, newValue);
 }
 if (hooks->UI) {
-    hooks->UI->RegisterOnConfigChanged(&OnConfigChanged);
+    hooks->UI->RegisterOnConfigChanged(g_self, &OnConfigChanged);
 }
 // In PluginShutdown:
 if (hooks->UI) {
-    hooks->UI->UnregisterOnConfigChanged(&OnConfigChanged);
+    hooks->UI->UnregisterOnConfigChanged(g_self, &OnConfigChanged);
 }
 ```
+
+> **Breaking change in v49.** Both functions gained a leading `const IPluginSelf* self` parameter, matching the self-first convention already used by `IPluginLogger` and `IPluginConfig`. Pass the same pointer you received in `PluginInit`. The modloader uses it to scope the notification, so your callback now fires only for edits to **your own** config file instead of receiving every plugin's config changes. Plugins written against v48 or earlier will not compile against this header until the argument is added.
 
 **Panel-closed notifications (v43)** fire whenever a panel window is closed, via the ImGui titlebar X button or via `SetPanelClose`:
 
@@ -851,6 +854,43 @@ if (hooks->UI && g_inputToken) {
 }
 ```
 
+**Direct draw lists (v48)** give you `ImDrawList`-level drawing from inside a panel or widget callback, for anything the widget API can't express -- custom gauges, minimap overlays, connector lines between widgets, full-screen HUD annotations.
+
+Three lists are available on the `IModLoaderImGui` table passed to your render callback:
+
+| Function | Draws |
+|----------|-------|
+| `GetWindowDrawList()` | Into the current window, clipped to it and ordered with its widgets |
+| `GetBackgroundDrawList()` | Behind every ImGui window, full viewport |
+| `GetForegroundDrawList()` | In front of every ImGui window, full viewport |
+
+```cpp
+void MyPanelRender(IModLoaderImGui* ui) {
+    PluginDrawList dl = ui->GetForegroundDrawList();
+
+    // Colors are packed ImU32 (0xAABBGGRR) -- build them with the helpers
+    // rather than hand-packing.
+    unsigned int red = ui->GetColorU32FromVec4(1.0f, 0.0f, 0.0f, 1.0f);
+
+    ui->DL_AddLine(dl, 100.0f, 100.0f, 400.0f, 300.0f, red, 2.0f);
+    ui->DL_AddCircleFilled(dl, 250.0f, 200.0f, 30.0f, red, 32);
+    ui->DL_AddText(dl, 100.0f, 80.0f, red, "Overlay");
+}
+```
+
+The handle is **valid for the current frame only** -- never cache a `PluginDrawList` across frames or hand it to another thread.
+
+The full surface, all prefixed `DL_`:
+
+- **Shapes** -- `AddLine`, `AddRect`, `AddRectFilled`, `AddRectFilledMultiColor`, `AddQuad(Filled)`, `AddTriangle(Filled)`, `AddCircle(Filled)`, `AddNgon(Filled)`, `AddEllipse(Filled)`
+- **Text** -- `AddText`, `AddTextSized`
+- **Curves and polys** -- `AddPolyline`, `AddConvexPolyFilled`, `AddBezierCubic`, `AddBezierQuadratic`
+- **Images** -- `AddImage`, `AddImageQuad`, `AddImageRounded`, taking the same `PluginTextureHandle` you get from [`hooks->ImGuiTextures`](#hooks-imguitextures)
+- **Path builder** -- `PathClear`, `PathLineTo`, `PathArcTo`, `PathArcToFast`, `PathEllipticalArcTo`, `PathBezierCubicCurveTo`, `PathBezierQuadraticCurveTo`, `PathRect`, then emit with `PathFillConvex` or `PathStroke`
+- **Clipping** -- `PushClipRect`, `PushClipRectFullScreen`, `PopClipRect`, `GetClipRectMin`, `GetClipRectMax` (a per-draw-list stack, separate from the window-level `PushClipRect` on `IModLoaderImGui` itself)
+
+Point arrays (`DL_AddPolyline`, `DL_AddConvexPolyFilled`) take a flat `const float*` of interleaved x,y pairs plus a point count, so no ImGui types cross the DLL boundary.
+
 ---
 
 #### hooks->HUD
@@ -873,6 +913,140 @@ hooks->HUD->UnregisterOnPostRender(&OnHUDPostRender); // call in PluginShutdown
 // Cast and call with the subsystem instance to force a player data refresh.
 uintptr_t gatherAddr = hooks->HUD->GetGatherPlayersDataAddress();
 ```
+
+---
+
+#### hooks->HUD->DebugDraw
+
+`IPluginDebugDraw` (v50) -- **in-world 3D debug drawing**. Reached through the HUD interface, so the same **client-only, always null-check** rule applies to `hooks->HUD`.
+
+**Why this exists.** Every `UKismetSystemLibrary::DrawDebug*` node is dead on the shipping game. `ENABLE_DRAW_DEBUG` is compiled to 0, so all sixteen implementations became empty bodies and the linker dropped them -- what survives is only the `exec` thunk, which parses its parameters off the stack and returns without drawing anything. The `DrawDebugType` pin on the trace nodes is inert for the same reason. The *renderer* underneath is untouched, though, so this interface rebuilds the same geometry and feeds it to the engine's own line batchers.
+
+**Threading: call it from wherever you like.** The batchers are UObjects and can only be touched on the game thread, but you don't have to arrange that -- your arguments are copied up front and the draw either runs inline or defers by one frame. This matters because ImGui panel and widget callbacks run on the *render* thread, which is the most natural place to want to draw something.
+
+```cpp
+if (!hooks->HUD || !hooks->HUD->DebugDraw) return;
+auto* dd = hooks->HUD->DebugDraw;
+
+// Resolves the native on first call; false means drawing is unavailable
+// on this build and every Draw* below is a silent no-op.
+if (!dd->IsAvailable()) {
+    LOG_WARN("In-world debug drawing unavailable");
+    return;
+}
+
+PluginDebugDrawStyle style = {};
+style.color       = { 0.0f, 1.0f, 0.0f, 1.0f };  // linear RGBA, 0..1
+style.duration    = 5.0f;                        // seconds; <= 0 = one frame
+style.thickness   = 2.0f;                        // 0 = thin lines
+style.bPersistent = false;                       // true = until FlushPersistentLines
+style.bForeground = false;                       // true = draw through geometry
+
+PluginDebugVector a = { 0.0, 0.0, 0.0 };
+PluginDebugVector b = { 0.0, 0.0, 500.0 };
+dd->DrawLine(&a, &b, &style);
+
+PluginDebugVector center = { 1000.0, 2000.0, 300.0 };
+dd->DrawSphere(&center, 150.0f, 16, &style);
+
+PluginDebugRotator rot = { 0.0, 45.0, 0.0 };     // pitch, yaw, roll in degrees
+PluginDebugVector  ext = { 100.0, 100.0, 100.0 };
+dd->DrawBox(&center, &ext, &rot, &style);
+```
+
+##### Per-frame vs retained -- pick one, don't mix
+
+The engine keeps four line batchers. Two are emptied wholesale at the end of every frame by `UGameViewportClient::Draw`; the other two are not, and hold their contents until a lifetime expires or something flushes them. Your `style` decides which pair you land in:
+
+| Style | Behaviour |
+|-------|-----------|
+| `duration <= 0` **and** `bPersistent = false` | **Per-frame.** Wiped at the end of the frame -- call it again next frame or it vanishes. |
+| `duration > 0` | **Retained.** One call; the engine keeps drawing it until the duration runs out. |
+| `bPersistent = true` | **Retained indefinitely.** One call; stays until `FlushPersistentLines()`. |
+
+**For anything that moves, use per-frame drawing.** There is no update or delete call and you don't need one -- draw it again at its new position each frame and the flush disposes of the old one for you. This is exactly what the per-frame batchers exist for:
+
+```cpp
+// Per-frame: a line that follows a moving target.
+// Just redraw it every tick -- no cleanup, no handle to track.
+void OnTick(float delta) {
+    auto* hooks = GetHooks();
+    if (!hooks->HUD || !hooks->HUD->DebugDraw) return;
+
+    PluginDebugDrawStyle style = {};
+    style.color     = { 1.0f, 0.0f, 0.0f, 1.0f };
+    style.thickness = 2.0f;
+    style.duration  = 0.0f;     // <= 0 -- this frame only
+    // bPersistent stays false
+
+    PluginDebugVector from = GetPlayerPos();
+    PluginDebugVector to   = GetTargetPos();
+    hooks->HUD->DebugDraw->DrawLine(&from, &to, &style);
+}
+hooks->Engine->RegisterOnTick(&OnTick);   // Unregister in PluginShutdown
+```
+
+**For anything static, draw it once.** Re-submitting a stationary marker every frame is wasted work:
+
+```cpp
+// Retained: a marker dropped once, when something happens.
+void OnObjectiveFound(PluginDebugVector location) {
+    auto* hooks = GetHooks();
+    if (!hooks->HUD || !hooks->HUD->DebugDraw) return;
+
+    PluginDebugDrawStyle style = {};
+    style.color       = { 0.0f, 1.0f, 0.0f, 1.0f };
+    style.thickness   = 3.0f;
+    style.bPersistent = true;   // or: style.duration = 30.0f; to self-expire
+
+    hooks->HUD->DebugDraw->DrawSphere(&location, 150.0f, 16, &style);
+}
+```
+
+> **The one real trap:** calling a *retained* draw every frame accumulates geometry. `style.duration = 5.0f` inside a tick callback leaves you with ~300 overlapping copies at 60fps, each counting down independently. If you draw from a per-frame callback, `duration` must be `<= 0` and `bPersistent` must be `false`.
+
+`FlushPersistentLines()` clears the retained batchers -- but it clears **every** plugin's persistent lines, not just yours. Prefer a finite `duration` over `bPersistent` unless you really do want to own the cleanup.
+
+**Cost.** Each `Draw*` call is exactly one native `DrawLines` call -- the whole primitive is accumulated first, so a 16-segment `DrawSphere` is a single ~512-line append rather than 512 calls. Render-state invalidation coalesces as well, so N calls in a frame queue one proxy rebuild, not N. Per-frame drawing is comfortable at sane volumes; just remember a sphere is ~512 lines and you pay for it on every frame you redraw it.
+
+**Available primitives:**
+
+| Function | Notes |
+|----------|-------|
+| `DrawLine` | |
+| `DrawPoint` | Drawn as a three-axis cross (the engine's point batch has no reachable entry point) |
+| `DrawCircle` | Lies in the plane spanned by the `yAxis`/`zAxis` you pass; both normalised internally |
+| `DrawSphere` | |
+| `DrawBox` | |
+| `DrawCapsule` | |
+| `DrawCylinder` | |
+| `DrawConeInDegrees` | Width/height angles in degrees, like the Blueprint node |
+| `DrawArrow` | |
+| `DrawCoordinateSystem` | Axes are fixed red/green/blue, so `style->color` is ignored |
+| `DrawPlane` | Outline + both diagonals rather than a filled quad |
+| `DrawFrustum` | Takes a `PluginDebugTransform` |
+| `DrawCamera` | Pass an `SDK::ACameraActor*`; reads its transform and its camera component's FOV |
+| `DrawCameraAt` | Same geometry from an explicit location/rotation/FOV, no actor lookup |
+| `DrawString` | Canvas-space text pinned to a world location |
+| `DrawFloatHistoryTransform` / `DrawFloatHistoryLocation` | Graph of a sample array; frame + polyline |
+| `FlushPersistentLines` | Clears both persistent batchers |
+| `ClearAllStrings` | Clears world-anchored debug strings |
+
+**Lifetime rules differ between lines and strings -- this catches people out.** The line batcher treats any lifetime `<= 0` as "never expires". The HUD text path does not: `AHUD::DrawDebugTextList` guards its countdown with `if (-1.0 != TimeRemaining)`, so **only exactly `-1.0f`** means permanent, and passing `0` makes the text vanish on the very next HUD render.
+
+```cpp
+PluginDebugVector at    = { 1000.0, 2000.0, 450.0 };
+PluginDebugColor  white = { 1.0f, 1.0f, 1.0f, 1.0f };
+
+dd->DrawString(&at, "Objective", nullptr, &white, 10.0f);   // 10 seconds
+dd->DrawString(&at, "Objective", nullptr, &white, -1.0f);   // permanent
+```
+
+Debug strings are independent of the line batchers -- `FlushPersistentLines` does not clear them, `ClearAllStrings` does.
+
+**Ownership.** Nothing you pass is retained after the call returns, including the `PluginDebugFloatHistory` sample array, which is deep-copied. The exception is actor pointers (`DrawCamera`'s camera actor and `DrawString`'s base actor) -- those pass straight through and must stay valid for the frame.
+
+**Frozen structs.** `PluginDebugVector`, `PluginDebugRotator`, `PluginDebugColor`, `PluginDebugPlane`, `PluginDebugTransform`, `PluginDebugFloatHistory` and `PluginDebugDrawStyle` are compiled into your plugin by value. They will never be reordered or extended -- any future additions arrive as new structs.
 
 ---
 
@@ -1439,8 +1613,11 @@ The loader accepts plugins whose `interfaceVersion` is in `[PLUGIN_INTERFACE_VER
 | v45     | no          | `IPluginImGuiTextures` texture slot cap raised 2048 -> 4096. Textures are now shared and refcounted by name (case-insensitive): a `Load*` call matching an already-loaded, in-use texture reuses the existing GPU resource and increments its refcount instead of creating a new copy. Every successful `Load*` call must still be paired with exactly one `FreeTexture` call; the resource is only released once the refcount reaches zero. |
 | v46     | **yes**     | Game update; MIN/MAX both bumped to 46. |
 | v47     | no          | Added `IPluginObjectWalker` (`hooks->ObjectWalker`, all builds) -- walks `SDK::UObject::GObjects` on demand, finds objects by class/object name, and invokes a `UFunction` on one by name via `ProcessEvent`. On-demand only (no hook into UObject construction); callers must trigger a walk and cache results. `WalkAllObjectsInto`/`FindObjectsByClassNameInto`/`FindObjectsByNameInto` fill a plugin-owned `PluginObjectInfo` buffer (no allocation crosses the DLL boundary) and return the total match count, which may exceed `capacity` if truncated. Each also takes a `PluginObjectLookupMode` (`Both`/`InstanceOnly`/`CDOOnly`) to filter `ClassDefaultObject`/`ArchetypeObject` entries out of `GObjects` without the caller needing to know raw `EObjectFlags` bit values. `PluginObjectInfo.className`/`objectName` are fixed-size char buffers, not pointers, since the array is read after the call returns. `InvokeUFunctionByName`/`InvokeResolvedUFunction` perform no parameter marshaling -- `paramsBuffer` must already match the target UFunction's native Params layout. Also added `IPluginDelegateHook` (`hooks->Delegate`, all builds) -- splices a synthetic UFunction into an existing UE5 multicast delegate (e.g. `OnAfterSave`) so plugins can react to it without a dedicated modloader-side hook module. Never touches a real `UClass`'s function table, so other code resolving the same function name by name is unaffected. Multiple concurrent hooks, including several on the same delegate, are supported via opaque `DelegateHookHandle` values. Callbacks are parameterless (`userContext` only). Also added `IPluginObjectProperties` (`hooks->ObjectProperties`, all builds) -- resolves a `UPROPERTY`/`FProperty` by class name + property name (walks the class's reflected property list + `SuperStruct` chain) and reads/writes it through typed accessors (`GetBoolProperty`/`GetIntProperty`/`GetFloatProperty`/`GetObjectProperty` + setters, `GetStringProperty`/`GetNameProperty` read-only, `GetPropertyRawPtr` escape hatch). Because the property's offset is resolved fresh against the running build's reflection metadata on every call, a game update that reshuffles struct layout does not require recompiling a plugin that goes through this interface -- only the property's *name* needs to stay the same. Does not cover plain native C++ members with no `UPROPERTY` entry. All three structs appended at the end of `IPluginHooks`. |
+| v48     | no          | Added `ImDrawList` direct-drawing access to `IModLoaderImGui`, appended at the end of the struct so existing v34+ plugins keep working unchanged. `GetWindowDrawList`/`GetBackgroundDrawList`/`GetForegroundDrawList` return an opaque `PluginDrawList` (== `ImDrawList*`) handle valid for the **current frame only** -- never cache it. Covers shape primitives (`DL_AddLine`, `DL_AddRect(Filled)`, `DL_AddRectFilledMultiColor`, `DL_AddQuad(Filled)`, `DL_AddTriangle(Filled)`, `DL_AddCircle(Filled)`, `DL_AddNgon(Filled)`, `DL_AddEllipse(Filled)`), text (`DL_AddText`, `DL_AddTextSized`), curves and polys (`DL_AddPolyline`, `DL_AddConvexPolyFilled`, `DL_AddBezierCubic`, `DL_AddBezierQuadratic`), images via the existing `PluginTextureHandle` (`DL_AddImage`, `DL_AddImageQuad`, `DL_AddImageRounded`), the stateful `DL_Path*` builder API, and a draw-list-local clip rect stack. Colors are packed `0xAABBGGRR` `ImU32` values -- build them with the existing `GetColorU32FromVec4`/`GetColorU32FromCol` helpers. |
+| v49     | **yes**     | **Breaking signature change.** `IPluginUIEvents::RegisterOnConfigChanged` / `UnregisterOnConfigChanged` now take a leading `const IPluginSelf* self` parameter, matching the self-first convention already used by `IPluginLogger` and `IPluginConfig`. Pass the pointer received in `PluginInit`. The modloader uses it to scope `FireConfigChanged`, so a plugin's callback now fires only for edits to its own config file instead of broadcasting every plugin's config changes to every listener. MIN bumped to 49. |
+| v50     | no          | Added `IPluginDebugDraw`, reached as `hooks->HUD->DebugDraw` (client only -- the whole HUD interface is null on server/generic). Reimplements all sixteen `UKismetSystemLibrary::DrawDebug*` nodes, which are dead on shipping builds: `ENABLE_DRAW_DEBUG` is 0, so every body compiled away to nothing and only the `exec` thunks survive, parsing their parameters off the `FFrame` and returning without drawing. The `DrawDebugType` pin on the trace nodes is inert for the same reason. The renderer is still alive -- `UWorld::LineBatchers[4]` (all four `NewObject`'d and registered by `UWorld::UpdateWorldComponents`) and `ULineBatchComponent::DrawLines` -- so the modloader builds the same geometry and hands it to the engine's own batchers. Covers `DrawLine`, `DrawPoint`, `DrawCircle`, `DrawSphere`, `DrawBox`, `DrawCapsule`, `DrawCylinder`, `DrawConeInDegrees`, `DrawArrow`, `DrawCoordinateSystem`, `DrawPlane`, `DrawFrustum`, `DrawCamera` (both an `ACameraActor*` form and a location/rotation/FOV form), `DrawString`, `DrawFloatHistoryTransform`, `DrawFloatHistoryLocation`, plus `FlushPersistentLines` and `ClearAllStrings`. Callable from any thread -- the wrappers copy every argument and defer to the game thread when needed, so drawing from an ImGui panel callback (which runs on the render thread) just works. Two primitives deviate from the engine because only `DrawLines` survived as an out-of-line function: `DrawPoint` is a three-axis cross, and `DrawPlane` / the float-history graphs draw outlines instead of filled quads. The new field is appended at the end of `IPluginHUDEvents` and all the geometry structs are new, so nothing existing shifts: MIN remains 49. |
 
-The current `PLUGIN_INTERFACE_VERSION_MIN` is **46** and `PLUGIN_INTERFACE_VERSION_MAX` is **47** (see `plugin_interface.h` for the authoritative value and full per-version changelog comments).
+The current `PLUGIN_INTERFACE_VERSION_MIN` is **49** and `PLUGIN_INTERFACE_VERSION_MAX` is **50** (see `plugin_interface.h` for the authoritative value and full per-version changelog comments).
 
 ---
 
