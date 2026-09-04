@@ -19,7 +19,7 @@ This guide covers building the mod loader from source, creating new plugins, the
    - [IPluginSelf](#ipluginself)
    - [IPluginLogger](#ipluginlogger)
    - [IPluginConfig](#ipluginconfig)
-   - [IPluginScanner](#ipluginscanner)
+   - [Pattern Scanning -- OnPluginLoadHooks / IPluginHookScanner](#pattern-scanning----onpluginloadhooks--ipluginhookscanner)
    - [IPluginHooks -- Sub-Interfaces](#ipluginhooks----sub-interfaces)
      - [hooks->Engine (IPluginEngineEvents)](#hooks-engine)
      - [hooks->World (IPluginWorldEvents)](#hooks-world)
@@ -43,6 +43,7 @@ This guide covers building the mod loader from source, creating new plugins, the
      - [hooks->ObjectWalker (IPluginObjectWalker)](#hooks-objectwalker)
      - [hooks->Delegate (IPluginDelegateHook)](#hooks-delegate)
      - [hooks->ObjectProperties (IPluginObjectProperties)](#hooks-objectproperties)
+     - [hooks->Console (IPluginConsole)](#hooks-console)
 7. [Interface Version Changelog](#interface-version-changelog)
 8. [Troubleshooting](#troubleshooting)
 
@@ -217,7 +218,12 @@ Mod loader scans Plugins/ directory
     --> loads MyPlugin.dll
     --> calls GetPluginInfo()    -- reads name, version, interfaceVersion
     --> version check: must be in [PLUGIN_INTERFACE_VERSION_MIN, MAX]
-    --> calls PluginInit(self)   -- IPluginSelf* bundles name, version, logger, config, scanner, hooks
+    --> calls OnPluginLoadHooks(self, scanner)   -- OPTIONAL export, the only place a
+                                                   plugin may pattern scan (v62+).
+        -- resolve every AOB you depend on
+        -- ANY miss refuses the plugin: PluginInit is never called and the DLL is freed
+        -- self->hooks is null here; install nothing yet
+    --> calls PluginInit(self)   -- IPluginSelf* bundles name, version, logger, config, hooks
         -- store self pointer (stable for the plugin's lifetime)
         -- register callbacks
         -- install hooks
@@ -360,8 +366,11 @@ The `IPluginSelf*` pointer passed to `PluginInit` is stable for the plugin's lif
 | `version` | `const char*` | Plugin version from `PluginInfo` |
 | `logger` | `IPluginLogger*` | Logging interface |
 | `config` | `IPluginConfig*` | Config read/write interface |
-| `scanner` | `IPluginScanner*` | Memory pattern scanner |
-| `hooks` | `IPluginHooks*` | All hook and event sub-interfaces |
+| `hooks` | `IPluginHooks*` | All hook and event sub-interfaces. **Null for the duration of `OnPluginLoadHooks`** -- resolve there, install in `PluginInit`. |
+
+> **v62:** `IPluginSelf::scanner` was removed. Pattern scanning now happens only inside the
+> optional `OnPluginLoadHooks` export -- see
+> [Pattern Scanning](#pattern-scanning----onpluginloadhooks--ipluginhookscanner) below.
 
 Store the pointer once in `PluginInit` and use it everywhere:
 
@@ -385,7 +394,6 @@ IPluginSelf* GetSelf();
 
 inline IPluginHooks*   GetHooks()   { auto* s = GetSelf(); return s ? s->hooks   : nullptr; }
 inline IPluginConfig*  GetConfig()  { auto* s = GetSelf(); return s ? s->config  : nullptr; }
-inline IPluginScanner* GetScanner() { auto* s = GetSelf(); return s ? s->scanner : nullptr; }
 ```
 
 ---
@@ -439,35 +447,61 @@ Config files are stored in `Plugins/config/<PluginName>.ini`.
 
 ---
 
-### IPluginScanner
+### Pattern Scanning -- OnPluginLoadHooks / IPluginHookScanner
 
-Uses IDA-style byte patterns where `??` is a wildcard byte.
+**v62 moved pattern scanning into its own load phase.** There is no `IPluginSelf::scanner`; the
+only `IPluginHookScanner` a plugin ever sees is the one passed to the optional
+`OnPluginLoadHooks` export, and every function in that table refuses a call made outside the
+event. Stashing the pointer and scanning from `PluginInit` or a tick does not work -- that is the
+point, not a side effect.
+
+The reason: a plugin used to resolve its AOBs from `PluginInit`, long after the loader had
+finished its own preflight and installed its own hooks. A plugin whose pattern stopped matching
+after a game update loaded anyway and then either did nothing or wrote a detour over whatever now
+lived at the address it guessed -- and neither the loader nor the user found out until something
+behaved strangely mid-session.
 
 ```cpp
-// Find the first match in the main game executable
-uintptr_t addr = scanner->FindPatternInMainModule("48 89 5C 24 ?? 57 48 83 EC 20");
+extern "C" __declspec(dllexport)
+void OnPluginLoadHooks(IPluginSelf* self, IPluginHookScanner* scan)
+{
+    g_finishCrafting = scan->ResolveRequired(self,
+        "UCrCraftingComponent::FinishCrafting",
+        "40 55 53 56 57 41 56 48 8D 6C 24 ??");
 
-// Find first match in a specific module
-uintptr_t addr = scanner->FindPatternInModule(GetModuleHandle("module.dll"), "48 8B C4 ...");
-
-// Find all matches (caller-buffer API, safe across DLL boundaries)
-int count = scanner->FindAllPatternsInMainModule("E8 ?? ?? ?? ??", nullptr, 0); // query count
-uintptr_t results[32];
-scanner->FindAllPatternsInMainModule("E8 ?? ?? ?? ??", results, 32);
-
-// Find a unique match from a list of candidates (useful for multi-version support)
-const char* patterns[] = { "48 8B C4 48 89 58 ??", "48 89 5C 24 ?? 48 89 6C" };
-int matched = 0;
-uintptr_t addr = scanner->FindUniquePattern(patterns, 2, &matched);
-
-// XRef scanning -- find all call sites / pointer slots referencing an address
-PluginXRef xrefs[64];
-int n = scanner->FindXrefsToAddressInMainModule(targetAddr, xrefs, 64);
-for (int i = 0; i < n; i++) {
-    // xrefs[i].address   -- address of the instruction or pointer slot
-    // xrefs[i].isRelative -- true = relative CALL/JMP, false = absolute pointer
+    // Optional: an address whose null return your plugin actually handles.
+    g_niceToHave = scan->ResolveOptional(self,
+        "UCrSomething::Nice", "48 89 5C 24 ?? 57 48 83 EC 20");
 }
 ```
+
+**Any miss refuses the plugin -- one is enough.** `PluginInit` is never called, the DLL is freed,
+and the miss is listed in the hook-failure popup (client) and by the `hookfailures` console
+command (both), with a copy-to-clipboard button so a user can hand you something actionable.
+`ResolveOptional` / `ReportWarning` change only the `[optional]` label on the report line, not the
+verdict: a plugin that asked the loader for an address and did not get it is running against a
+build it was not made for, and which half of it still works is not a question the loader or the
+user can answer.
+
+`self->hooks` is **null for the whole event**, deliberately. Resolve here, install from
+`PluginInit`. A plugin that registered a callback or wrote a detour during the event would be left
+with a pointer into a freed module the moment a later pattern missed.
+
+Plugins that do not scan simply do not export `OnPluginLoadHooks`.
+
+| Function | Notes |
+|----------|-------|
+| `ResolveRequired(self, hookName, pattern)` | Main module (the game .exe). Returns 0 on a miss. |
+| `ResolveOptional(self, hookName, pattern)` | Same, labelled `[optional]` in the report. |
+| `ResolveRequiredInModule` / `ResolveOptionalInModule` | Scoped to one loaded `HMODULE`. |
+| `ResolveRequiredUnique` / `ResolveOptionalUnique` | Several candidate patterns; succeeds only when exactly one matches exactly once. `outPatternIndex` (may be null) receives which one did. |
+| `FindAllPatternsInMainModule` / `FindAllPatternsInModule` | Raw scans into a caller-owned buffer, for resolving an address in steps. Record nothing on their own. |
+| `FindXrefsToAddress` / `...InModule` / `...InMainModule` | XRef scanning into a caller-owned `PluginXRef[]` (`address`, `isRelative`). Also records nothing. |
+| `ReportFailure(self, hookName, detail)` | Record something you worked out yourself -- a vtable slot holding an unexpected value, an offset that failed a sanity check. Refuses the plugin exactly like a missed pattern. |
+| `ReportWarning(self, hookName, detail)` | Same, labelled `[optional]`. |
+| `HasFailures(self)` | True once anything has missed. Lets you skip the rest of a resolve chain you already know cannot work; does not change the outcome. |
+
+Patterns are IDA-style byte strings where `??` is a wildcard byte.
 
 ---
 
@@ -1405,7 +1439,7 @@ Fires for any crafting building type -- Crafter, Forge, Refinery, Factory, Assem
 
 **On-demand only:** there is no hook into UObject construction, so nothing fires live as objects spawn -- every call walks GObjects synchronously (tens of thousands of entries) and you are responsible for caching results, not calling these every tick.
 
-**Caller-buffer API:** `WalkAllObjectsInto`, `FindObjectsByClassNameInto`, and `FindObjectsByNameInto` fill a plugin-owned `PluginObjectInfo` array you pass in -- nothing is allocated by the modloader, so no memory crosses the DLL boundary in either direction (same pattern as `IPluginScanner`'s `FindAllPatternsInMainModule`). Each returns the **total** match count, which may exceed the buffer's `capacity` if there were more matches than you had room for; compare the return value against `capacity` to detect truncation and re-call with a bigger buffer if you need every match.
+**Caller-buffer API:** `WalkAllObjectsInto`, `FindObjectsByClassNameInto`, and `FindObjectsByNameInto` fill a plugin-owned `PluginObjectInfo` array you pass in -- nothing is allocated by the modloader, so no memory crosses the DLL boundary in either direction (same pattern as `IPluginHookScanner`'s `FindAllPatternsInMainModule`). Each returns the **total** match count, which may exceed the buffer's `capacity` if there were more matches than you had room for; compare the return value against `capacity` to detect truncation and re-call with a bigger buffer if you need every match.
 
 **Lookup mode:** every find/walk function takes a `PluginObjectLookupMode` so you don't need to know raw `EObjectFlags` bit values to skip template objects:
 
@@ -1606,6 +1640,114 @@ if (raw) {
 
 ---
 
+#### hooks->Console
+
+`IPluginConsole` (v63, **all builds** -- never null on a v63 loader) registers commands into the
+mod loader's own console registry and runs command lines from code with the output captured.
+
+One registry, two front-ends: the ImGui developer console on client builds and the Win32 console
+window on any build launched with `-console` (the only console a dedicated server has). A command
+registered once works in whichever the user has, is listed by `help` under your plugin's name, and
+completes with Tab. These are mod loader commands, not engine commands -- the client console tries
+this registry first and falls through to the engine console for anything it does not recognise.
+
+```cpp
+static void Cmd_Balance(const char* const* argv, int argc,
+                        PluginConsoleSink sink, void* userData)
+{
+    IPluginConsole* console = GetHooks()->Console;
+
+    if (argc < 2) {
+        console->Write(sink, PluginConsoleLineKind::Error, "usage: balance <player>");
+        return;
+    }
+    console->Printf(sink, PluginConsoleLineKind::Output, "%s has %d credits",
+                    argv[1], LookupBalance(argv[1]));
+}
+
+bool PluginInit(IPluginSelf* self)
+{
+    if (!self->hooks->Console) return true;          // loader older than v63
+
+    PluginConsoleCommandDesc desc = {};
+    desc.name       = "balance";
+    desc.aliases    = "bal money";                   // space-separated, may be null
+    desc.usage      = "balance <player>";
+    desc.help       = "Show a player's credit balance";
+    desc.handler    = Cmd_Balance;
+    desc.userData   = &g_state;
+    desc.gameThread = true;                          // reads engine state
+
+    if (!self->hooks->Console->RegisterCommand(self, &desc))
+        LOG_WARN("could not register 'balance' -- name already taken");
+    return true;
+}
+
+void PluginShutdown()
+{
+    if (auto* s = GetSelf(); s && s->hooks && s->hooks->Console)
+        s->hooks->Console->UnregisterAllCommands(s);
+}
+```
+
+`argv[0]` is the command name **exactly as typed** (which may be one of your aliases);
+`argv[1..argc-1]` are the arguments, split on whitespace with `"quoted runs"` collapsed into a
+single entry. `argv` and its strings are valid for the call only. The loader copies every string
+in `desc`, so they need not outlive the call.
+
+**Output** is line-oriented and typed so the front-end can colour it:
+`PluginConsoleLineKind::Output` (normal), `Notice` (dimmed headers and hints), `Error` (red).
+`Printf` formats into a 1024-byte buffer. `Clear(sink)` wipes the scrollback where the front-end
+has one.
+
+**`gameThread`** makes the loader run your handler on the next engine tick instead of on the
+console thread that typed the command. Set it for anything touching engine state -- the console
+threads are a raw input reader and the render thread, and neither is safe for that. The cost is
+that the command is queued: whatever typed it has already returned by the time you run.
+
+**Capturing output from code** -- how you get a textual result out of a command for an RCON
+bridge, an HTTP route, or a chat command:
+
+```cpp
+static void OnLine(PluginConsoleLineKind, const char* text, void* user)
+{ static_cast<Capture*>(user)->text += text; static_cast<Capture*>(user)->text += "\n"; }
+
+static void OnDone(void* user)
+{ Capture* c = static_cast<Capture*>(user); Reply(c->text.c_str()); delete c; }
+
+Capture* cap = new Capture();
+if (!hooks->Console->Execute(self, "plugins", OnLine, OnDone, cap))
+    delete cap;      // first token is not a registered command; nothing ran
+```
+
+| Function | Returns |
+|----------|---------|
+| `RegisterCommand(self, desc)` | `false` if a field is missing, or the name or an alias is taken |
+| `UnregisterCommand(self, name)` | `false` if you do not own a command by that primary name |
+| `UnregisterAllCommands(self)` | how many commands were removed |
+| `HasCommand(name)` | `true` if any command, built-in or plugin, answers to that name or alias |
+| `Write(sink, kind, text)` / `Printf(sink, kind, fmt, ...)` / `Clear(sink)` | -- |
+| `Execute(self, line, onLine, onComplete, userData)` | `false` if the first token is not a command |
+
+**Three rules**, each of which is a crash the loader had to make impossible:
+
+- **A sink is valid only inside the call it was handed to.** The front-end owns it. Stashing the
+  handle and writing from a worker thread later is a use-after-free; the loader drops the write
+  and logs, but the output is gone. Print everything before returning.
+- **Unregister in `PluginShutdown`.** Handler addresses point into your module. The loader drops
+  every command a plugin owns before freeing its DLL and re-validates a queued `gameThread`
+  handler before calling it -- that is a safety net, not a design.
+- **Output can arrive on the game thread.** A `gameThread` command's handler, and the `Execute`
+  callbacks for one, run on a later tick from a different thread than the caller. Both must be
+  thread-safe, and `userData` must outlive the call.
+
+Command names are **case-insensitive and global** -- one namespace shared with the built-ins
+(`help`, `plugins`, `reload`, `version`, ...) and every other plugin. `RegisterCommand` returns
+`false` rather than shadowing an existing name, so check it and prefix anything generic with your
+plugin's name.
+
+---
+
 ## Interface Version Changelog
 
 The loader accepts plugins whose `interfaceVersion` is in `[PLUGIN_INTERFACE_VERSION_MIN, PLUGIN_INTERFACE_VERSION_MAX]`. All interface structs are append-only so older plugins still load without recompilation as long as they are within the supported range.
@@ -1658,8 +1800,16 @@ The loader accepts plugins whose `interfaceVersion` is in `[PLUGIN_INTERFACE_VER
 | v49     | **yes**     | **Breaking signature change.** `IPluginUIEvents::RegisterOnConfigChanged` / `UnregisterOnConfigChanged` now take a leading `const IPluginSelf* self` parameter, matching the self-first convention already used by `IPluginLogger` and `IPluginConfig`. Pass the pointer received in `PluginInit`. The modloader uses it to scope `FireConfigChanged`, so a plugin's callback now fires only for edits to its own config file instead of broadcasting every plugin's config changes to every listener. MIN bumped to 49. |
 | v50     | no          | Added `IPluginDebugDraw`, reached as `hooks->HUD->DebugDraw` (client only -- the whole HUD interface is null on server/generic). Reimplements all sixteen `UKismetSystemLibrary::DrawDebug*` nodes, which are dead on shipping builds: `ENABLE_DRAW_DEBUG` is 0, so every body compiled away to nothing and only the `exec` thunks survive, parsing their parameters off the `FFrame` and returning without drawing. The `DrawDebugType` pin on the trace nodes is inert for the same reason. The renderer is still alive -- `UWorld::LineBatchers[4]` (all four `NewObject`'d and registered by `UWorld::UpdateWorldComponents`) and `ULineBatchComponent::DrawLines` -- so the modloader builds the same geometry and hands it to the engine's own batchers. Covers `DrawLine`, `DrawPoint`, `DrawCircle`, `DrawSphere`, `DrawBox`, `DrawCapsule`, `DrawCylinder`, `DrawConeInDegrees`, `DrawArrow`, `DrawCoordinateSystem`, `DrawPlane`, `DrawFrustum`, `DrawCamera` (both an `ACameraActor*` form and a location/rotation/FOV form), `DrawString`, `DrawFloatHistoryTransform`, `DrawFloatHistoryLocation`, plus `FlushPersistentLines` and `ClearAllStrings`. Callable from any thread -- the wrappers copy every argument and defer to the game thread when needed, so drawing from an ImGui panel callback (which runs on the render thread) just works. Two primitives deviate from the engine because only `DrawLines` survived as an out-of-line function: `DrawPoint` is a three-axis cross, and `DrawPlane` / the float-history graphs draw outlines instead of filled quads. The new field is appended at the end of `IPluginHUDEvents` and all the geometry structs are new, so nothing existing shifts: MIN remains 49. |
 | v51     | no          | Added `IPluginUIEvents::AcquireInputPassthrough` / `ReleaseInputPassthrough` -- a cooperative counterpart to the v43 capture tokens. A capture token is all-or-nothing and freezes the game entirely, which is wrong for an always-on widget UI the player is meant to keep playing underneath. A passthrough token feeds ImGui every message and lets it draw and own the cursor, but only cuts the game out of the input classes ImGui actually wants that frame -- mouse while the cursor is over an ImGui window (`io.WantCaptureMouse`), keyboard while a text field has focus (`io.WantCaptureKeyboard`/`WantTextInput`). Everything else, including the `WM_INPUT` raw-mouse deltas UE5 uses for camera look, still reaches the game. Exclusive capture always wins, so behaviour with any modloader window, plugin panel or v43 token active is unchanged. Appended at the end of `IPluginUIEvents`: MIN remains 49. |
+| v52     | no          | Added `IModLoaderImGui::GetMouseWheel` / `GetMouseWheelH`. The v36 mouse query block covered buttons, position, dragging and hovering but never the wheel, so a plugin drawing its own scrollable or zoomable surface had no way to read it -- ImGui consumes the `WM_MOUSEWHEEL` itself. Both return the per-frame delta straight off `ImGuiIO`, one notch = 1.0. Appended to the (append-only) function table. |
+| v53     | no          | `IPluginNetworkChannel` now works on a **listen host** (a client build hosting the session). `SendPacketToClient`, `SendPacketToAllClients`, `RegisterServerMessageHandler` and `ExcludeFromBroadcast` used to be unconditional no-ops on client builds. Authority is a runtime property, not a build-time one, so all four are now real on client builds and gated per call on the net mode. **Behaviour change, no layout change:** `IsServer()` now reports net authority rather than "was this the server build" -- true on a listen host, false on a pure client and in Standalone. Use `PluginInfo::pluginTarget` if you meant "which DLL am I in", or `hooks->NetMode->GetNetMode()` for the full four-way answer. On a listen host both send functions skip the host's own player controller (an RPC aimed at it executes in-process and would arrive twice). |
+| v54     | no          | Plugin networking moved onto the Unreal **control channel**; the previous transport was deleted, not deprecated. Envelopes used to ride two game RPCs (`ClientSaveStringToTxt`, `ServerExecuteConsoleCommand`); both hooks are gone. `IPluginNetworkChannel` is unchanged in shape and behaves the same from a plugin's point of view. Two observable consequences: `IPluginNativePointers::ClientMessageExec` is now **always** `nullptr` on every build (the field is kept so the struct layout does not shift), and there is no fallback transport -- every peer in a session must run a loader whose control-channel patterns resolved, which is why those patterns are *required* at preflight. |
+| v55     | no          | Server->client sends are now gated on a **client plugin manifest**. A joining client reports every plugin it has loaded with versions; the authority records that per connection and delivers a packet from plugin P version V only to clients that reported P at exactly V. No signature changed. `SendPacketToAllClients` therefore no longer means "every client" -- it means every client that has your plugin at your exact version, and a version bump on one side silently stops delivery (which is the point: two builds disagreeing about their own packet layout is the failure this prevents). A client that has not yet reported receives nothing. Inspect it all with the `clients` console command. |
+| v56     | no          | **Handshake before the wire, and a client-ready signal.** A client used to send its manifest unprompted the moment it had a world; on a server not running the loader that control bunch is an unrecognised message type, and the engine closes the connection -- so joining a vanilla server with the loader installed disconnected you. The authority now greets each joining client through `APlayerController::ClientMessage` (an ordinary replicated RPC that does nothing on a loader-less client), and nothing goes on the control channel in either direction until that greeting has been seen. What plugins see is that a client is "ready" at a defined moment, and it is **later** than player-join: `IsClientReady(pc, self)` is exactly the predicate `SendPacketToClient` gates on, and `RegisterClientReadyCallback` fires once per client per plugin when it becomes true -- send join-time state from there, **not** from a player-joined hook. `IsServerReady` / `RegisterServerReadyCallback` are the client-side mirror. The loader deliberately does not buffer and replay packets sent before a peer is ready; sends to a peer that is not ready are dropped and warn once per plugin per connection. |
+| v57-61  | --          | *(not individually documented in `plugin_interface.h` -- game-update-only bumps.)* |
+| v62     | **yes**     | **ABI break. MIN and MAX both move to 62 -- every plugin must be rebuilt.** AOB scanning moved into its own load phase and out of `IPluginSelf`. `IPluginSelf::scanner` and `IPluginScanner` are **gone** (a plugin built against v61 reads `self->hooks` out of what is now a shorter struct). New optional export `OnPluginLoadHooks(IPluginSelf*, IPluginHookScanner*)`, called after `GetPluginInfo` and before `PluginInit`, is the only context in which a plugin may pattern scan; the table refuses calls made outside it. `Resolve*` names each address, and **any miss refuses the plugin** -- required vs optional is a label on the failure report, not a lighter verdict. The loader skips `PluginInit`, frees the DLL, and lists the miss in a popup (client) and in the `hookfailures` console command (both). `self->hooks` is null for the duration of the event on purpose: resolve there, install in `PluginInit`. See [Pattern Scanning](#pattern-scanning----onpluginloadhooks--ipluginhookscanner). |
+| v63     | no          | Added `IPluginConsole` (`hooks->Console`, all builds) -- `ModConsole` command registration and output sinks. `RegisterCommand` adds a named command with aliases, `help`/`usage` text, an opaque `userData` and a `gameThread` flag that runs the handler on the next engine tick; the handler receives the arguments as a `const char* const* argv` / `int argc` pair (whitespace-split, `"quoted runs"` collapsed) and writes typed, line-oriented output through an opaque `PluginConsoleSink` (`Write`/`Printf`/`Clear`, kinds `Output`/`Notice`/`Error`). `Execute` runs any command line -- yours, another plugin's, or a built-in -- and delivers its output to your own callback instead of a console window, which is what makes a command's result available to something that is not a person looking at a screen (an RCON bridge, an HTTP route); every console function in the game's own server dump returns `void`, and the only text-returning path is client-only. Sinks are valid only inside the call they were handed to; unregister in `PluginShutdown` (the loader also drops a plugin's commands before freeing its DLL, and re-validates a queued handler before calling it); a `gameThread` command's output arrives on the game thread. Names are case-insensitive and global, and `RegisterCommand` returns `false` rather than shadowing a built-in or another plugin's command. Appended at the end of `IPluginHooks`: MIN remains 62. |
 
-The current `PLUGIN_INTERFACE_VERSION_MIN` is **49** and `PLUGIN_INTERFACE_VERSION_MAX` is **50** (see `plugin_interface.h` for the authoritative value and full per-version changelog comments).
+The current `PLUGIN_INTERFACE_VERSION_MIN` is **62** and `PLUGIN_INTERFACE_VERSION_MAX` is **63** (see `plugin_interface.h` for the authoritative value and full per-version changelog comments).
 
 ---
 
