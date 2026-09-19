@@ -2042,8 +2042,9 @@ Results: `PLUGIN_PAK_OK` (0), `PLUGIN_PAK_ALREADY_MOUNTED` (1), and the negative
 `pak spawn <classpath> [x y z]` (in front of the player when no coordinates are given) let you
 exercise a container before writing any plugin code, and `pak spawnmesh <meshpath> [x y z]` drops
 a static or skeletal mesh into the world on an engine carrier actor so a mesh in your pak can be
-eyeballed without authoring a Blueprint for it. Full guide: `PakLoading.md` in the mod loader
-repository.
+eyeballed without authoring a Blueprint for it. On the client, `pak widget <classpath> [zorder]`
+puts a UMG widget class on the viewport with the cursor shown, and `pak widget close` takes it
+down. Full guide: `PakLoading.md` in the mod loader repository.
 
 ---
 
