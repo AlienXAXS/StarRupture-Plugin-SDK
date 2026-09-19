@@ -44,6 +44,8 @@ This guide covers building the mod loader from source, creating new plugins, the
      - [hooks->Delegate (IPluginDelegateHook)](#hooks-delegate)
      - [hooks->ObjectProperties (IPluginObjectProperties)](#hooks-objectproperties)
      - [hooks->Console (IPluginConsole)](#hooks-console)
+     - [hooks->GameMenu (IPluginGameMenu) -- Client only](#hooks-gamemenu)
+     - [hooks->Pak (IPluginPak)](#hooks-pak)
 7. [Interface Version Changelog](#interface-version-changelog)
 8. [Troubleshooting](#troubleshooting)
 
@@ -1746,6 +1748,301 @@ Command names are **case-insensitive and global** -- one namespace shared with t
 `false` rather than shadowing an existing name, so check it and prefix anything generic with your
 plugin's name.
 
+#### hooks->GameMenu
+
+`IPluginGameMenu` (v64, **client only** -- `nullptr` on server/generic builds) adds a row to the
+game's own main menu and pause menu, next to OPTIONS and CREDITS, built out of the menu's own
+button class so it looks, sounds and navigates like a stock row. The loader registers its own
+MOD LOADER row the same way.
+
+```cpp
+static void OnMenuRow(void* userData) { OpenMyWindow(); }   // game thread; keep it short
+
+bool PluginInit(IPluginSelf* self)
+{
+    if (self->hooks->GameMenu)                                 // null on server builds
+    {
+        PluginGameMenuEntryDesc desc = {};
+        desc.id      = "mymod-settings";                       // stable across reloads
+        desc.label   = "MY MOD";                               // the game upper-cases it anyway
+        desc.targets = PLUGIN_GAME_MENU_MAIN | PLUGIN_GAME_MENU_PAUSE;
+        desc.anchor  = PLUGIN_GAME_MENU_ANCHOR_AFTER_OPTIONS;
+        desc.onClick = OnMenuRow;
+        g_menuRow = self->hooks->GameMenu->AddEntry(self, &desc);
+    }
+    return true;
+}
+
+void PluginShutdown()
+{
+    if (auto* s = GetSelf(); s && s->hooks && s->hooks->GameMenu)
+        s->hooks->GameMenu->RemoveAllEntries(s);
+}
+```
+
+`IsAvailable()` can be `false`: the injection rests on two AOB patterns a game update can move,
+and losing them costs the rows and nothing else. A plugin whose only UI entry point is a menu row
+should check it and offer a keybind as well. A row added while a menu is on screen appears the
+next time that menu is built.
+
+#### hooks->Pak
+
+`IPluginPak` (v67, **all builds** -- never null on a v67 loader) mounts pak files, and the IoStore
+containers that go with them, into the running engine; keeps a registry of what is mounted so
+nothing is mounted twice; and loads or spawns what is inside. `IsAvailable()` reports whether the
+three engine entry points resolved on the binary you are running in -- a miss makes every
+`Mount*` call return `PLUGIN_PAK_UNAVAILABLE` and nothing else.
+
+**Read this first: what a mod pak has to be.** StarRupture ships its content as **IoStore
+containers** (`pakchunk0-Windows.utoc` / `.ucas`); the `.pak` next to them is a thin index. In UE5
+the package loader finds packages only through the package store, and the package store only
+knows IoStore containers. So:
+
+- A **`.pak` + `.utoc` + `.ucas` triplet** (same base name, same folder) is a full mod. The loader
+  mounts the pak and the engine opens the container beside it in the same call. Assets load by
+  path.
+- A **bare `.pak`** with `.uasset` files inside mounts without complaint and loads nothing.
+  `LoadObject` returns null for everything in it. The pak's own index still serves loose files
+  (`.ini`, `.json`, `.txt`), which is a legitimate use.
+
+Cook with IoStore enabled (the UE5 project default), or convert a legacy pak with
+`retoc to-zen --version UE5_6`. Package paths must be under `/Game/...`, which is
+`../../../StarRupture/Content/...` inside the pak; `/Game/Mods/<YourMod>/...` is a good convention.
+The `pak load` console command tells you in one line whether a container is being served.
+
+##### Mounting from a file
+
+```cpp
+static PluginPakHandle g_pak = nullptr;
+
+bool PluginInit(IPluginSelf* self)
+{
+    IPluginPak* pak = self->hooks->Pak;
+    if (!pak || !pak->IsAvailable())
+    {
+        LOG_WARN("pak mounting unavailable on this loader/build");
+        return true;
+    }
+
+    PluginPakMountOptions opts = {};
+    opts.order = PLUGIN_PAK_ORDER_DEFAULT;                     // 100: above every stock pak
+
+    // Relative paths resolve against Plugins\<YourPlugin>\ -- ship the
+    // triplet in a folder named after your plugin, next to the DLL.
+    PluginPakResult r = pak->MountFile(self, "MyMod.pak", &opts, &g_pak);
+    if (r < 0)
+    {
+        LOG_ERROR("MountFile failed: %s", pak->ResultToString(r));
+        return false;
+    }
+    // PLUGIN_PAK_OK or PLUGIN_PAK_ALREADY_MOUNTED -- both leave g_pak valid.
+
+    void* cls = pak->LoadClass("/Game/Mods/MyMod/BP_Turret.BP_Turret_C");   // UClass*
+    if (!cls)
+        LOG_WARN("BP_Turret did not load -- is the pak an IoStore container?");
+    return true;
+}
+```
+
+`PLUGIN_PAK_ALREADY_MOUNTED` is a **success**: the engine already had that file, mounted earlier
+by you, by another plugin, by an earlier load of your plugin before a reload, or by the game at
+startup (anything under `Content\Paks\`, including `~mods` and `LogicMods`, is mounted before any
+plugin runs). The handle names the existing mount and nothing was mounted a second time. Treat
+`r < 0` as failure and everything else as mounted.
+
+##### Mounting from resources embedded in your DLL
+
+The engine reads paks only through its own file layer, so there is no "mount from a buffer".
+`MountResource` (and `MountMemory`, which it wraps) writes the bytes to
+`ModLoader\PakCache\<YourPlugin>\<name>.pak` (plus `.utoc` / `.ucas`) and mounts from there. A hash
+sidecar records what was written, so the next launch with the same embedded bytes skips the write.
+A cached file that is currently mounted is never overwritten -- the engine holds it open -- so a
+new build of your DLL with changed pak bytes logs a warning, returns the old mount, and takes
+effect on the next launch.
+
+1. Add a resource script to your project. Create `MyPlugin.rc` next to `plugin.cpp`:
+
+   ```rc
+   // MyPlugin.rc -- the three files of an IoStore mod, as raw data.
+   // Paths are relative to the .rc file. Use RCDATA; the loader looks for
+   // that type only.
+   MYMOD_PAK  RCDATA "Pak\\MyMod.pak"
+   MYMOD_UTOC RCDATA "Pak\\MyMod.utoc"
+   MYMOD_UCAS RCDATA "Pak\\MyMod.ucas"
+   ```
+
+   and reference it from the `.vcxproj` (or add it through Solution Explorer -> Add ->
+   Existing Item, which does the same):
+
+   ```xml
+   <ItemGroup>
+     <ResourceCompile Include="MyPlugin.rc" />
+   </ItemGroup>
+   ```
+
+2. Keep your module handle. The ExamplePlugin's `dllmain.cpp` already receives it:
+
+   ```cpp
+   HMODULE g_module = nullptr;
+
+   BOOL APIENTRY DllMain(HMODULE hModule, DWORD reason, LPVOID)
+   {
+       if (reason == DLL_PROCESS_ATTACH)
+       {
+           g_module = hModule;
+           DisableThreadLibraryCalls(hModule);
+       }
+       return TRUE;
+   }
+   ```
+
+3. Mount from `PluginInit`:
+
+   ```cpp
+   extern HMODULE g_module;
+   static PluginPakHandle g_pak = nullptr;
+
+   static void OnModActor(PluginPakHandle, void* actor, void* world, void*)
+   {
+       // Game thread, after the actor's BeginPlay. actor is an AActor*, world a UWorld*.
+       LOG_INFO("ModActor up: %p", actor);
+   }
+
+   bool PluginInit(IPluginSelf* self)
+   {
+       IPluginPak* pak = self->hooks->Pak;
+       if (!pak || !pak->IsAvailable())
+           return true;
+
+       PluginPakMountOptions opts = {};
+       opts.order             = PLUGIN_PAK_ORDER_DEFAULT;
+       opts.modActorClass     = "/Game/Mods/MyMod/ModActor.ModActor_C";   // optional, see below
+       opts.onModActorSpawned = OnModActor;                                // optional
+       opts.userData          = nullptr;
+
+       PluginPakResult r = pak->MountResource(self, g_module,
+                                              "MYMOD_PAK", "MYMOD_UTOC", "MYMOD_UCAS",
+                                              "MyMod",        // cache base name; null = pak resource name
+                                              &opts, &g_pak);
+       if (r < 0)
+       {
+           LOG_ERROR("MountResource failed: %s", pak->ResultToString(r));
+           return false;
+       }
+       return true;
+   }
+   ```
+
+   Resource names are the string or decimal id the `.rc` used. Pass `nullptr` for both the utoc
+   and ucas names to embed a legacy pak (both or neither). A `.ucas` can be hundreds of megabytes;
+   it is mapped from your DLL rather than copied, and written to the cache once.
+
+`MountMemory` is the same thing from buffers you already hold:
+
+```cpp
+PluginPakMemoryImage img = {};
+img.name = "MyMod";
+img.pak  = pakBytes;  img.pakSize  = pakLen;
+img.utoc = utocBytes; img.utocSize = utocLen;      // optional, with ucas
+img.ucas = ucasBytes; img.ucasSize = ucasLen;
+pak->MountMemory(self, &img, &opts, &g_pak);        // buffers are only read during the call
+```
+
+##### Loading and spawning
+
+```cpp
+void* tex   = pak->LoadObject("/Game/Mods/MyMod/T_Icon.T_Icon");           // UObject*
+void* cls   = pak->LoadClass("/Game/Mods/MyMod/BP_Turret.BP_Turret_C");    // UClass* -- note _C
+
+PluginDebugVector  at  = { 1000.0, 2000.0, 300.0 };
+PluginDebugRotator rot = { 0.0, 90.0, 0.0 };                                // pitch, yaw, roll
+void* actor = pak->SpawnActor(cls, &at, &rot);                              // AActor*; nulls = origin
+```
+
+`LoadObject` / `LoadClass` wrap `StaticLoadObject`, so they return an object that is already loaded
+as readily as one that is not. `SpawnActor` goes through
+`UGameplayStatics::BeginDeferredActorSpawnFromClass` / `FinishSpawningActor` with `AlwaysSpawn`
+collision handling, in the current world. The pointers are the SDK's `SDK::UObject*` /
+`SDK::UClass*` / `SDK::AActor*`; `hooks->ObjectWalker` and `hooks->ObjectProperties` work on them
+like any other object.
+
+##### The ModActor convention
+
+UE4SS's BPModLoader gives Blueprint mods a fixed entry point: a `ModActor` class in the mod's
+folder, spawned into every world, with `PreBeginPlay` / `PostBeginPlay` events the mod implements.
+`PluginPakMountOptions::modActorClass` does the same here. While the pak is mounted, every world
+that begins play gets one instance of that class at the origin; `PreBeginPlay` is called before its
+`BeginPlay` and `PostBeginPlay` after, when the class (or a parent) defines them. If a world is
+already in play when you mount, the actor is spawned immediately. A Blueprint mod authored for
+UE4SS's `LogicMods` folder therefore runs here unchanged: mount its pak and name its `ModActor_C`.
+
+The class name stays with the mount across a reload of your plugin (it is content in the pak, not
+code in your DLL); your callback pointer does not, and is set again by the options you pass when
+you mount after reloading.
+
+##### Ownership, unload and unmount
+
+Every mount has an owner. The registry is keyed on the normalized absolute path, which is what
+turns a second mount of the same file into `PLUGIN_PAK_ALREADY_MOUNTED` instead of a duplicate --
+the engine itself would happily mount the same pak twice and serve whichever copy sorted first.
+
+**Unloading a plugin does not unmount its paks.** The mount is marked orphaned (`ownerUnloaded` in
+`PluginPakInfo`, `[unloaded]` in `pak list`) and stays as it was; the next mount of that path --
+the same plugin after a reload, usually -- adopts it. This is deliberate: the engine cannot
+un-load objects already created from a container. After `Unmount` they stay alive with their bulk
+data (texture mips, audio, streamed LODs) unreachable, and the next streaming request into them is
+undefined behaviour. The loader cannot see which live objects came from which container, so it
+never decides that for you. Unmount only when nothing loaded from the pak is still referenced --
+between sessions, never with a ModActor in the world -- and otherwise leave it mounted; a mounted
+pak nobody reads costs nothing. **Do not `Unmount` in `PluginShutdown`.**
+
+A plugin can only unmount its own mounts (`PLUGIN_PAK_NOT_OWNER` otherwise), and nobody can
+unmount a pak the game mounted at startup. The console's `pak unmount` is the operator's override
+for anything the loader mounted.
+
+##### Threading
+
+Mounting broadcasts `OnPakFileMounted2`, whose engine-side handlers only ever run on the game
+thread, and loading and spawning are game-thread only outright. Every `IPluginPak` function runs
+its work on the game thread: inline from `PluginInit` (the main thread is parked) or from a
+game-thread callback; queued to the next tick and waited on for up to 10 seconds from anywhere
+else, such as an ImGui panel callback. `PLUGIN_PAK_TIMEOUT` (or a null from the asset helpers)
+means the request is **still queued**, not that it failed -- a later `IsMounted` /
+`GetMountedInto` shows the result. Prefer `hooks->Engine->PostToGameThread` and calling from
+there when you cannot afford to block.
+
+##### Order
+
+Paks are searched highest order first. The engine derives an order from the path when asked (3
+under `Content\Paks`, 0 anywhere else), which would put a pak in your plugin folder below every
+stock pak. `PLUGIN_PAK_ORDER_DEFAULT` therefore resolves to **100**, matching the engine's own
+`_P` patch-pak convention, so a mod wins a file collision by default. Pass an explicit value to sit
+elsewhere; a mod that only adds content does not care.
+
+| Function | Returns |
+|----------|---------|
+| `IsAvailable()` | `false` when the engine entry points did not resolve on this build |
+| `MountFile(self, path, options, &handle)` | `PluginPakResult`; `>= 0` is mounted |
+| `MountMemory(self, image, options, &handle)` | same, via `ModLoader\PakCache\<plugin>\` |
+| `MountResource(self, hModule, pakRes, utocRes, ucasRes, cacheName, options, &handle)` | same, from RCDATA resources |
+| `Unmount(self, handle)` | `PLUGIN_PAK_OK`, `NOT_MOUNTED`, `NOT_OWNER`, ... |
+| `IsMounted(path)` | `true` if the engine has it, whoever mounted it |
+| `GetMountedInto(self, out, maxOut)` | total count (may exceed `maxOut`); every engine-mounted pak, with loader bookkeeping attached where there is any |
+| `LoadObject(path)` / `LoadClass(path)` | `UObject*` / `UClass*` or null |
+| `SpawnActor(class, location, rotation)` | `AActor*` or null; null location/rotation = origin/identity |
+| `ResultToString(result)` | a short description for your log lines |
+
+Results: `PLUGIN_PAK_OK` (0), `PLUGIN_PAK_ALREADY_MOUNTED` (1), and the negatives
+`UNAVAILABLE`, `INVALID_ARGUMENT`, `FILE_NOT_FOUND`, `ENGINE_REFUSED` (the engine log's
+`LogPakFile` says why), `CACHE_WRITE_FAILED`, `RESOURCE_NOT_FOUND`, `NOT_MOUNTED`, `NOT_OWNER`,
+`TIMEOUT`, `FAULT`.
+
+**Console:** `pak` lists every mounted pak with order, owner and file count; `pak mount <path>
+[order]`, `pak unmount <#|path>`, `pak load <objectpath>`, `pak loadclass <classpath>` and
+`pak spawn <classpath> [x y z]` (in front of the player when no coordinates are given) let you
+exercise a container before writing any plugin code. Full guide: `PakLoading.md` in the mod loader
+repository.
+
 ---
 
 ## Interface Version Changelog
@@ -1808,8 +2105,12 @@ The loader accepts plugins whose `interfaceVersion` is in `[PLUGIN_INTERFACE_VER
 | v57-61  | --          | *(not individually documented in `plugin_interface.h` -- game-update-only bumps.)* |
 | v62     | **yes**     | **ABI break. MIN and MAX both move to 62 -- every plugin must be rebuilt.** AOB scanning moved into its own load phase and out of `IPluginSelf`. `IPluginSelf::scanner` and `IPluginScanner` are **gone** (a plugin built against v61 reads `self->hooks` out of what is now a shorter struct). New optional export `OnPluginLoadHooks(IPluginSelf*, IPluginHookScanner*)`, called after `GetPluginInfo` and before `PluginInit`, is the only context in which a plugin may pattern scan; the table refuses calls made outside it. `Resolve*` names each address, and **any miss refuses the plugin** -- required vs optional is a label on the failure report, not a lighter verdict. The loader skips `PluginInit`, frees the DLL, and lists the miss in a popup (client) and in the `hookfailures` console command (both). `self->hooks` is null for the duration of the event on purpose: resolve there, install in `PluginInit`. See [Pattern Scanning](#pattern-scanning----onpluginloadhooks--ipluginhookscanner). |
 | v63     | no          | Added `IPluginConsole` (`hooks->Console`, all builds) -- `ModConsole` command registration and output sinks. `RegisterCommand` adds a named command with aliases, `help`/`usage` text, an opaque `userData` and a `gameThread` flag that runs the handler on the next engine tick; the handler receives the arguments as a `const char* const* argv` / `int argc` pair (whitespace-split, `"quoted runs"` collapsed) and writes typed, line-oriented output through an opaque `PluginConsoleSink` (`Write`/`Printf`/`Clear`, kinds `Output`/`Notice`/`Error`). `Execute` runs any command line -- yours, another plugin's, or a built-in -- and delivers its output to your own callback instead of a console window, which is what makes a command's result available to something that is not a person looking at a screen (an RCON bridge, an HTTP route); every console function in the game's own server dump returns `void`, and the only text-returning path is client-only. Sinks are valid only inside the call they were handed to; unregister in `PluginShutdown` (the loader also drops a plugin's commands before freeing its DLL, and re-validates a queued handler before calling it); a `gameThread` command's output arrives on the game thread. Names are case-insensitive and global, and `RegisterCommand` returns `false` rather than shadowing a built-in or another plugin's command. Appended at the end of `IPluginHooks`: MIN remains 62. |
+| v64     | no          | Added `IPluginGameMenu` (`hooks->GameMenu`, client only, null on server/generic) -- rows in the game's own main menu and pause menu (`AddEntry` / `RemoveEntry` / `RemoveAllEntries` / `IsAvailable`), built from the menu's own button class next to the loader's MOD LOADER row. `onClick` runs on the game thread; remove entries in `PluginShutdown`. `IsAvailable()` can be `false` (two optional AOB patterns). Appended at the end of `IPluginHooks`: MIN remains 63. |
+| v65     | no          | Game update; interface bump only, no API changes. |
+| v66     | no          | Game update; interface bump only, no API changes. |
+| v67     | no          | Added `IPluginPak` (`hooks->Pak`, all builds) -- runtime pak mounting and asset loading. `MountFile` / `MountMemory` / `MountResource` mount a `.pak` (and the `.utoc`/`.ucas` IoStore container beside it) through the engine's own `FCoreDelegates::MountPak` handler; a registry keyed on the path returns `PLUGIN_PAK_ALREADY_MOUNTED` (a success) instead of mounting anything twice, and adopts mounts orphaned by a plugin unload. Memory/resource paks are written once to `ModLoader\PakCache\<plugin>\` with a hash sidecar. `LoadObject` / `LoadClass` wrap `StaticLoadObject`; `SpawnActor` spawns a class in the current world; `modActorClass` in the mount options spawns a Blueprint class in every world that begins play with `PreBeginPlay` / `PostBeginPlay` (the UE4SS BPModLoader convention). Plugin unload never unmounts; `Unmount` is the caller's risk while objects from the pak are alive. All calls run on the game thread (inline from `PluginInit`, queued and waited on elsewhere). This game is IoStore: a bare `.pak` of `.uasset`s mounts and loads nothing. `PLUGIN_PAK_ORDER_DEFAULT` resolves to 100. Appended at the end of `IPluginHooks`: MIN remains 66. |
 
-The current `PLUGIN_INTERFACE_VERSION_MIN` is **62** and `PLUGIN_INTERFACE_VERSION_MAX` is **63** (see `plugin_interface.h` for the authoritative value and full per-version changelog comments).
+The current `PLUGIN_INTERFACE_VERSION_MIN` is **66** and `PLUGIN_INTERFACE_VERSION_MAX` is **67** (see `plugin_interface.h` for the authoritative value and full per-version changelog comments).
 
 ---
 
