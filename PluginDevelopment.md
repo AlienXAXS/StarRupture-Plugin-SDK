@@ -2040,7 +2040,9 @@ Results: `PLUGIN_PAK_OK` (0), `PLUGIN_PAK_ALREADY_MOUNTED` (1), and the negative
 **Console:** `pak` lists every mounted pak with order, owner and file count; `pak mount <path>
 [order]`, `pak unmount <#|path>`, `pak load <objectpath>`, `pak loadclass <classpath>` and
 `pak spawn <classpath> [x y z]` (in front of the player when no coordinates are given) let you
-exercise a container before writing any plugin code. Full guide: `PakLoading.md` in the mod loader
+exercise a container before writing any plugin code, and `pak spawnmesh <meshpath> [x y z]` drops
+a static or skeletal mesh into the world on an engine carrier actor so a mesh in your pak can be
+eyeballed without authoring a Blueprint for it. Full guide: `PakLoading.md` in the mod loader
 repository.
 
 ---
