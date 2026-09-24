@@ -20,6 +20,7 @@ This guide covers building the mod loader from source, creating new plugins, the
    - [IPluginLogger](#ipluginlogger)
    - [IPluginConfig](#ipluginconfig)
    - [Pattern Scanning -- OnPluginLoadHooks / IPluginHookScanner](#pattern-scanning----onpluginloadhooks--ipluginhookscanner)
+     - [v68: a pattern must be unique, and it must be what you said it is](#v68-a-pattern-must-be-unique-and-it-must-be-what-you-said-it-is)
    - [IPluginHooks -- Sub-Interfaces](#ipluginhooks----sub-interfaces)
      - [hooks->Engine (IPluginEngineEvents)](#hooks-engine)
      - [hooks->World (IPluginWorldEvents)](#hooks-world)
@@ -491,13 +492,99 @@ with a pointer into a freed module the moment a later pattern missed.
 
 Plugins that do not scan simply do not export `OnPluginLoadHooks`.
 
+#### v68: a pattern must be unique, and it must be what you said it is
+
+Two rules were added in v68. **Both refuse the plugin, and neither has an opt-out.** They apply to
+plugins built against older headers too, because they live in the loader rather than in the ABI --
+so a plugin that has worked for months can start being refused after a game update. That is the
+intent: it was already resolving to an address nobody had checked.
+
+**1. Exactly one match.** Two matches is not an address, it is a coin flip. Before v68 the first
+match won silently, and the offset was then written into `scan_cache.ini` -- so a pattern that
+stopped being unique after a game update resolved to whichever copy sat lower in the image, on
+every launch, with nothing looking wrong until something misbehaved mid-session.
+
+**2. The address must be the right KIND of thing.** A pattern that lands 0x37 bytes inside an
+unrelated function still "matches". Declaring what you expect lets the loader check it against the
+executable's own structure before handing the address back.
+
+```cpp
+extern "C" __declspec(dllexport)
+void OnPluginLoadHooks(IPluginSelf* self, IPluginHookScanner* scan)
+{
+    PluginScanRequest req = PLUGIN_SCAN_REQUEST_INIT;   // always use the macro
+    req.hookName = "UCrCraftingComponent::FinishCrafting";
+    req.pattern  = "40 55 53 56 57 41 56 48 8D 6C 24 ??";
+    req.kind     = PLUGIN_SCAN_FUNCTION_START;
+
+    g_finishCrafting = scan->Resolve(self, &req);   // 0 on failure, already reported
+}
+```
+
+| Kind | Checked against |
+|------|-----------------|
+| `PLUGIN_SCAN_FUNCTION_START` | The exception directory (`.pdata`): a function's primary entry, not a separated cold chunk, and at least 14 bytes long so a detour fits |
+| `PLUGIN_SCAN_IN_FUNCTION` | Inside some function that has unwind info -- for mid-function anchors: a call site, a compare you want to patch |
+| `PLUGIN_SCAN_CODE` | Any executable section -- for hand-written thunks and stubs that legitimately have no unwind info and so fail `FUNCTION_START` |
+| `PLUGIN_SCAN_DATA` | An initialised, non-executable section |
+| `PLUGIN_SCAN_VTABLE` | Data, and the first `vtableSlots` pointers each point at a function start |
+| `PLUGIN_SCAN_ANY` | Nothing. Uniqueness only, and the report labels it unvalidated |
+
+`PLUGIN_SCAN_UNSPECIFIED` is `0` and is **refused** -- a request that forgot to declare a kind does
+not quietly get the weakest check. `PLUGIN_SCAN_REQUEST_INIT` sets a valid `structSize` (the loader
+refuses a request without one) and a sane default for every other field, so use it rather than
+zero-initialising.
+
+Two more fields worth knowing:
+
+- `resultOffset` is added to the match **before** the kind check. When the report says your pattern
+  landed `0x37` bytes inside a function, `-0x37` is the fix.
+- `followRel32At`, with `PLUGIN_SCAN_FLAG_FOLLOW_REL32` in `flags`, decodes an `E8`/`E9` at that
+  offset and resolves to its target instead -- for reaching a function through a distinctive call
+  site. Unlike decoding it yourself, the target still gets the kind check. It is opt-in by flag
+  rather than by a sentinel because offset 0 is a perfectly ordinary place to decode a call from.
+
+Uniqueness applies to the raw pattern matches; the kind check applies to the final address after
+those two transforms. One resolve, two independent verdicts -- and the failure detail always says
+which of them failed.
+
+#### Reading a failure
+
+```
+UCrCraftingComponent::FinishCrafting  [required]
+    pattern is not unique -- it matched 3 times and an AOB must resolve to exactly one address.
+    Pattern: 40 55 53 56 57 41 56 48 8D 6C 24 ??
+      #1  StarRuptureGameSteam-Win64-Shipping.exe+0x3F219B0  .text  function start (0x1A4 bytes)
+      #2  StarRuptureGameSteam-Win64-Shipping.exe+0x41C2A37  .text  inside function +0x41C2A00 (+0x37)
+      #3  StarRuptureGameSteam-Win64-Shipping.exe+0x52B1104  .rdata
+```
+
+Those RVAs paste straight into a disassembler. If a `.pdb` happens to sit next to the game exe, the
+symbol name is appended too.
+
+#### Scans see the game as it shipped
+
+You do not have to think about the loader's own hooks. By the time your `OnPluginLoadHooks` runs,
+the loader has already stamped a 14-byte JMP over the entry of `UObject::ProcessEvent`,
+`AActor::BeginPlay`, `UGameEngine::Tick` and two dozen more -- which is exactly the set you are
+most likely to want -- and other plugins may have patched more.
+
+The scanner reads through all of it, so a resolve answers the same question your disassembler did:
+a pattern anchored on a hooked function's entry still matches, and a pattern containing
+`FF 25 00 00 00 00` does not start matching the loader's own stubs. Before v68 both of those went
+wrong, and the first one could silently resolve to an unrelated address that happened to be the
+only visible match.
+
+#### The function table
+
 | Function | Notes |
 |----------|-------|
-| `ResolveRequired(self, hookName, pattern)` | Main module (the game .exe). Returns 0 on a miss. |
+| `Resolve(self, &request)` | **v68, preferred.** Typed and validated -- see above. |
+| `ResolveRequired(self, hookName, pattern)` | Main module (the game .exe). Returns 0 on a miss. Equivalent to `Resolve` with `PLUGIN_SCAN_ANY`: uniqueness enforced, no structural check, report labelled unvalidated. |
 | `ResolveOptional(self, hookName, pattern)` | Same, labelled `[optional]` in the report. |
-| `ResolveRequiredInModule` / `ResolveOptionalInModule` | Scoped to one loaded `HMODULE`. |
-| `ResolveRequiredUnique` / `ResolveOptionalUnique` | Several candidate patterns; succeeds only when exactly one matches exactly once. `outPatternIndex` (may be null) receives which one did. |
-| `FindAllPatternsInMainModule` / `FindAllPatternsInModule` | Raw scans into a caller-owned buffer, for resolving an address in steps. Record nothing on their own. |
+| `ResolveRequiredInModule` / `ResolveOptionalInModule` | Scoped to one loaded `HMODULE`. No scan cache (it is keyed on the game's own version). |
+| `ResolveRequiredUnique` / `ResolveOptionalUnique` | Several candidate patterns tried in order; the first that resolves to exactly one address wins. `outPatternIndex` (may be null) receives which one did. |
+| `FindAllPatternsInMainModule` / `FindAllPatternsInModule` | Raw scans into a caller-owned buffer, for resolving an address in steps. Record nothing on their own, and deliberately see the **live** image -- hooks and all. |
 | `FindXrefsToAddress` / `...InModule` / `...InMainModule` | XRef scanning into a caller-owned `PluginXRef[]` (`address`, `isRelative`). Also records nothing. |
 | `ReportFailure(self, hookName, detail)` | Record something you worked out yourself -- a vtable slot holding an unexpected value, an offset that failed a sanity check. Refuses the plugin exactly like a missed pattern. |
 | `ReportWarning(self, hookName, detail)` | Same, labelled `[optional]`. |
@@ -698,6 +785,33 @@ hooks->Hooks->Remove(g_hook);
 g_hook     = nullptr;
 g_original = nullptr;
 ```
+
+**Several owners can hook one address (v68).** You do not have to check whether the loader or
+another plugin got there first. The loader keeps one real detour per address and splices every
+owner onto a chain:
+
+```
+target -> loader's hook -> ModA's hook -> your hook -> the real function
+```
+
+Links run in install order and the `original` you are handed calls the next one, so everybody's
+detour runs. Before v68 a second `Install` on an address silently corrupted the first one: it read
+the existing JMP stub as if it were the function prologue and copied its 8-byte address literal
+into a trampoline as though it were code.
+
+Three things follow:
+
+- **Your `original` is a loader-owned thunk, not the game function.** Call it. Do not compare it
+  against an address, read bytes through it, or assume it is stable storage -- it gets rewired when
+  a link in front of yours is removed.
+- **If you do not call your `original`, nothing behind you runs.** Fine when deliberate, confusing
+  otherwise. `hooks` in the console prints every hooked address and its owners in call order.
+- **`Remove` only removes you.** The original bytes are restored when the *last* link on that
+  address goes, so unhooking never disturbs anyone else.
+
+This applies to `hooks->Hooks->Install` specifically. A plugin that writes its own detour with its
+own trampoline code bypasses the loader entirely and gets none of it -- including the protection,
+so it will corrupt any loader hook on the same address exactly as before.
 
 ---
 
@@ -2113,7 +2227,9 @@ The loader accepts plugins whose `interfaceVersion` is in `[PLUGIN_INTERFACE_VER
 | v66     | no          | Game update; interface bump only, no API changes. |
 | v67     | no          | Added `IPluginPak` (`hooks->Pak`, all builds) -- runtime pak mounting and asset loading. `MountFile` / `MountMemory` / `MountResource` mount a `.pak` (and the `.utoc`/`.ucas` IoStore container beside it) through the engine's own `FCoreDelegates::MountPak` handler; a registry keyed on the path returns `PLUGIN_PAK_ALREADY_MOUNTED` (a success) instead of mounting anything twice, and adopts mounts orphaned by a plugin unload. Memory/resource paks are written once to `ModLoader\PakCache\<plugin>\` with a hash sidecar. `LoadObject` / `LoadClass` wrap `StaticLoadObject`; `SpawnActor` spawns a class in the current world; `modActorClass` in the mount options spawns a Blueprint class in every world that begins play with `PreBeginPlay` / `PostBeginPlay` (the UE4SS BPModLoader convention). Plugin unload never unmounts; `Unmount` is the caller's risk while objects from the pak are alive. All calls run on the game thread (inline from `PluginInit`, queued and waited on elsewhere). This game is IoStore: a bare `.pak` of `.uasset`s mounts and loads nothing. `PLUGIN_PAK_ORDER_DEFAULT` resolves to 100. Appended at the end of `IPluginHooks`: MIN remains 66. |
 
-The current `PLUGIN_INTERFACE_VERSION_MIN` is **66** and `PLUGIN_INTERFACE_VERSION_MAX` is **67** (see `plugin_interface.h` for the authoritative value and full per-version changelog comments).
+| v68     | no          | **Typed and unique pattern scanning, plus a behaviour change that reaches older plugins.** Added `PluginScanKind`, `PluginScanFlags`, `PluginScanRequest` and `IPluginHookScanner::Resolve`, appended at the bottom of the struct so MIN stays at 66 and existing plugins compile unchanged. A pattern must now match **exactly once** -- a second match refuses the plugin, where previously the first match won silently and was memoized into `scan_cache.ini`. `Resolve` additionally checks the resolved address against the executable's structure (`FUNCTION_START` against the `.pdata` exception directory and a 14-byte minimum so a detour fits, `IN_FUNCTION`, `CODE`, `DATA`, `VTABLE`, or `ANY` to opt out); `PLUGIN_SCAN_UNSPECIFIED` is 0 and is refused, so a request that forgets to declare a kind gets a message rather than the weakest check. `resultOffset` shifts the match before the kind check; `followRel32At` (with `PLUGIN_SCAN_FLAG_FOLLOW_REL32`) decodes an `E8`/`E9` and resolves to its target, which then gets the kind check too. Failure reports now list every match with its section, its containing function and its symbol if a PDB is present. Scans read through the loader's own hooks, so a pattern anchored on an already-hooked function still matches and a pattern containing `FF 25 00 00 00 00` no longer matches the loader's stubs. `hooks->Hooks->Install` gained multi-owner chaining: several owners can hook one address, `original` is a loader thunk that calls the next link, and `Remove` restores the original bytes only when the last link goes. The four pre-existing `Resolve*` entry points still work, scanning with `PLUGIN_SCAN_ANY`. MIN remains 66. |
+
+The current `PLUGIN_INTERFACE_VERSION_MIN` is **66** and `PLUGIN_INTERFACE_VERSION_MAX` is **68** (see `plugin_interface.h` for the authoritative value and full per-version changelog comments).
 
 ---
 
@@ -2126,12 +2242,27 @@ The current `PLUGIN_INTERFACE_VERSION_MIN` is **66** and `PLUGIN_INTERFACE_VERSI
 - Check `Plugins/logs/modloader.log` for initialization errors.
 - Ensure the DLL was built for the matching configuration (client/server).
 
-### Pattern Not Found
+### Pattern Not Found, Not Unique, or the Wrong Kind
 
-- Verify the pattern against a disassembler (IDA, Ghidra, x64dbg).
-- Game updates change binary layouts -- patterns may need updating after a patch.
-- Use `FindAllPatternsInMainModule` to check for zero or multiple matches.
-- Check that client-only patterns are not scanned in a server build.
+Since v68 a resolve fails in three distinct ways, and the report says which. Read it before
+touching the pattern -- it lists every match with its section and containing function.
+
+- **Not found.** Verify the pattern against a disassembler (IDA, Ghidra, x64dbg). Game updates
+  change binary layouts. Check that client-only patterns are not scanned in a server build.
+- **Not unique.** The pattern matched more than once, which refuses the plugin. Lengthen it or
+  anchor it on something more distinctive; the report gives you every match as an RVA you can paste
+  straight into a disassembler. Do not assume the lowest address is the right one -- that is exactly
+  the guess v68 exists to stop.
+- **Wrong kind.** It matched once, but the address is not what you declared. If the report says it
+  landed *N* bytes inside a function, either shorten the pattern or set `resultOffset` to `-N`. If
+  it says there is no unwind entry, you may be looking at a hand-written thunk -- use
+  `PLUGIN_SCAN_CODE` rather than `PLUGIN_SCAN_FUNCTION_START`.
+
+You do **not** need to account for the loader's own hooks: scans read through them, so a pattern
+anchored on an already-hooked function still matches.
+
+`FindAllPatternsInMainModule` remains available for exploring by hand, but note that it sees the
+live image (hooks included) and records nothing -- `Resolve` is what produces a report.
 
 ### Hook Crashes
 
