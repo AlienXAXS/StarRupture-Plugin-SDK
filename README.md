@@ -66,8 +66,11 @@ extern "C" __declspec(dllexport) bool PluginInit(IPluginSelf* self)
 | `version` | `const char*` | Plugin version from `PluginInfo` |
 | `logger` | `IPluginLogger*` | Logging interface |
 | `config` | `IPluginConfig*` | Config read/write interface |
-| `scanner` | `IPluginScanner*` | Memory pattern scanner |
-| `hooks` | `IPluginHooks*` | All hook and event sub-interfaces |
+| `hooks` | `IPluginHooks*` | All hook and event sub-interfaces. `nullptr` during `OnPluginLoadHooks` |
+
+There is no `scanner` member. Pattern scanning lives in the optional `OnPluginLoadHooks` export,
+which receives its own `IPluginHookScanner` and is the only place a plugin can scan -- see
+[PluginDevelopment.md](PluginDevelopment.md#pattern-scanning----onpluginloadhooks--ipluginhookscanner).
 
 The `ExamplePlugin/` files demonstrate the full pattern.
 
