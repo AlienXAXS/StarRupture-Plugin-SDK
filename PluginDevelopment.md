@@ -843,7 +843,7 @@ if (hooks->Memory->IsAllocatorAvailable()) {
 
 #### hooks->Input
 
-`IPluginInputEvents` -- keybind subscriptions. **Client builds only. Always null-check.**
+`IPluginInputEvents` -- keybind and mouse wheel subscriptions. **Client builds only. Always null-check.**
 
 ```cpp
 if (!hooks->Input) return; // not a client build
@@ -876,6 +876,44 @@ void OnComboFired(EModKey key, EModKeyModifiers mods, EModKeyEvent event) {
 hooks->Input->RegisterKeybindCombo(EModKey::F5, EModKeyMod_Ctrl, EModKeyEvent::Pressed, &OnComboFired);
 hooks->Input->UnregisterKeybindCombo(EModKey::F5, EModKeyMod_Ctrl, EModKeyEvent::Pressed, &OnComboFired);
 ```
+
+**Mouse wheel (v70).** Keybinds have no wheel keys, and `IModLoaderImGui::GetMouseWheel` only reads non-zero while a ModLoader window has the cursor. For the wheel during normal gameplay, register a wheel handler. Return `true` to consume the event so the game never sees it:
+
+```cpp
+static bool OnWheel(const PluginMouseWheelEvent* ev, void* /*userData*/)
+{
+    // Ctrl+wheel zooms our map; everything else goes to the game.
+    if (!(ev->modifiers & PluginWheelMod_Ctrl) || ev->delta == 0.0f)
+        return false;
+
+    g_zoom += ev->delta * 0.1f;   // one notch = 1.0; rawDelta has the unscaled value
+    return true;
+}
+
+// In PluginInit:
+if (hooks->Input)
+    hooks->Input->RegisterMouseWheel(OnWheel, nullptr);
+
+// In PluginShutdown:
+if (hooks->Input)
+    hooks->Input->UnregisterMouseWheel(OnWheel, nullptr);
+```
+
+`PluginMouseWheelEvent` fields:
+
+| Field | Meaning |
+|-------|---------|
+| `size` | `sizeof(PluginMouseWheelEvent)` as the loader built it. Fields may be appended later; check it before reading one newer than the header you built against. |
+| `rawDelta` / `rawDeltaH` | Signed raw delta from `WM_MOUSEWHEEL` / `WM_MOUSEHWHEEL`. Notched wheels give multiples of 120; touchpads and free-spinning wheels give smaller values, so accumulate rather than assuming 120. Vertical positive = rotated away from the user; horizontal positive = right. |
+| `delta` / `deltaH` | The same values divided by 120 (one notch = 1.0, the unit ImGui uses). |
+| `modifiers` | `PluginWheelModifiers` bits held when the message was generated. These are **sided** (`PluginWheelMod_LeftCtrl`, `..._RightAlt`, ...), unlike `EModKeyModifiers`; the un-sided `PluginWheelMod_Ctrl` / `_Shift` / `_Alt` / `_Win` masks match either side. |
+| `screenX` / `screenY` | Cursor position in screen coordinates, from the message. |
+| `uiCapturing` | `true` while a ModLoader/plugin window has exclusive input capture. The return value is then ignored and ImGui scrolls as normal; the event is delivered only so a handler can track state. |
+
+- Exactly one axis is non-zero per event -- Windows sends vertical and horizontal as separate messages.
+- Handlers run on the game thread (the thread pumping the game window's messages), in registration order. The first to return `true` stops the chain: the game does not receive the event and later handlers are not called.
+- `(callback, userData)` is the registration's identity: registering the same pair twice is ignored, and `UnregisterMouseWheel` takes the same pair.
+- Registrations are dropped automatically when the plugin is unloaded or reloaded, so a stale handler cannot be called. Unregister in `PluginShutdown` anyway.
 
 ---
 
@@ -1411,7 +1449,8 @@ void RenderMyPanel(IModLoaderImGui* imgui) {
     }
 }
 
-// Free in PluginShutdown (or whenever no longer needed; safe to call with NULL)
+// Free in PluginShutdown (or whenever no longer needed; safe to call with NULL,
+// and since v70 safe to call from any thread at any time)
 if (hooks->ImGuiTextures && g_tex) {
     hooks->ImGuiTextures->FreeTexture(g_tex);
     g_tex = nullptr;
@@ -1419,6 +1458,8 @@ if (hooks->ImGuiTextures && g_tex) {
 ```
 
 Textures loaded with the same `name` (case-insensitive) share one GPU resource and are refcounted -- every successful `Load*` call must be paired with exactly one `FreeTexture` call. Capacity is currently 4096 slots (v45); query with `GetFreeSlotCount()` / `GetCapacity()`.
+
+**`FreeTexture` is safe at any time (v70).** It retires the texture rather than destroying it: the handle stops drawing immediately, and the GPU resource and its slot are released once every frame that could have used them has finished. You can free from the game thread, from a render callback, or during a world transition, with no frame-counting or delays. Before v70 a game-thread `FreeTexture` could release a resource the render thread's in-flight command list still used, and the GPU faulted. The slot becomes reusable a frame or two later, so `GetFreeSlotCount` does not count it until then. This is a loader-side change, so it applies to plugins built against older headers too.
 
 ---
 
@@ -1764,8 +1805,9 @@ mod loader's own console registry and runs command lines from code with the outp
 One registry, two front-ends: the ImGui developer console on client builds and the Win32 console
 window on any build launched with `-console` (the only console a dedicated server has). A command
 registered once works in whichever the user has, is listed by `help` under your plugin's name, and
-completes with Tab. These are mod loader commands, not engine commands -- the client console tries
-this registry first and falls through to the engine console for anything it does not recognise.
+completes with Tab. These are mod loader commands, not engine commands -- both consoles try this
+registry first and fall through to the engine for anything it does not recognise. A leading `!`
+skips the registry, for the few names (`help`, `version`) both sides answer to.
 
 ```cpp
 static void Cmd_Balance(const char* const* argv, int argc,
@@ -1836,6 +1878,33 @@ if (!hooks->Console->Execute(self, "plugins", OnLine, OnDone, cap))
     delete cap;      // first token is not a registered command; nothing ran
 ```
 
+**Engine commands too: `ExecuteWithEngine` (v69).** `Execute` only runs registered commands.
+`ExecuteWithEngine` takes a line exactly as a person would type it into the `-console` window --
+registered commands first, the engine for anything else, `!` to go straight to the engine -- so a
+remote console can offer the lot through one call:
+
+```cpp
+Capture* cap = new Capture();
+if (!hooks->Console->ExecuteWithEngine(self, line, OnLine, OnDone, cap))
+    delete cap;      // only for a null/empty argument
+```
+
+That reaches `help`, `plugins`, every plugin's commands, cvars (`CrRepGraph.Foo 1`), and engine
+exec commands (`log LogTemp Verbose`). Three differences from `Execute`:
+
+- **Everything runs on the game thread**, including registered commands with `gameThread = false`.
+  Neither callback ever fires on the calling thread, and both fire only once the engine ticks --
+  never block the game thread waiting for `onComplete`.
+- **An unknown command is an `Error` line, not a `false` return.** `false` means only a null or
+  empty argument. On `true`, `onComplete` fires exactly once.
+- **Engine output is whatever the command wrote to its `FOutputDevice`.** A command that only logs
+  through `GLog` produces no lines here, the same as in the `-console` window without `-log`.
+
+On a client, the engine route is `APlayerController::ConsoleCommand` when there is a local player
+controller, and `UGameEngine::Exec` otherwise; a dedicated server always uses the latter. Note that
+`exit` and `quit` are engine commands: sent through `ExecuteWithEngine` they shut the process down.
+The `-console` window intercepts those two words; this does not.
+
 | Function | Returns |
 |----------|---------|
 | `RegisterCommand(self, desc)` | `false` if a field is missing, or the name or an alias is taken |
@@ -1844,6 +1913,7 @@ if (!hooks->Console->Execute(self, "plugins", OnLine, OnDone, cap))
 | `HasCommand(name)` | `true` if any command, built-in or plugin, answers to that name or alias |
 | `Write(sink, kind, text)` / `Printf(sink, kind, fmt, ...)` / `Clear(sink)` | -- |
 | `Execute(self, line, onLine, onComplete, userData)` | `false` if the first token is not a command |
+| `ExecuteWithEngine(self, line, onLine, onComplete, userData)` (v69) | `false` only for a null/empty argument |
 
 **Three rules**, each of which is a crash the loader had to make impossible:
 
@@ -2226,10 +2296,11 @@ The loader accepts plugins whose `interfaceVersion` is in `[PLUGIN_INTERFACE_VER
 | v65     | no          | Game update; interface bump only, no API changes. |
 | v66     | no          | Game update; interface bump only, no API changes. |
 | v67     | no          | Added `IPluginPak` (`hooks->Pak`, all builds) -- runtime pak mounting and asset loading. `MountFile` / `MountMemory` / `MountResource` mount a `.pak` (and the `.utoc`/`.ucas` IoStore container beside it) through the engine's own `FCoreDelegates::MountPak` handler; a registry keyed on the path returns `PLUGIN_PAK_ALREADY_MOUNTED` (a success) instead of mounting anything twice, and adopts mounts orphaned by a plugin unload. Memory/resource paks are written once to `ModLoader\PakCache\<plugin>\` with a hash sidecar. `LoadObject` / `LoadClass` wrap `StaticLoadObject`; `SpawnActor` spawns a class in the current world; `modActorClass` in the mount options spawns a Blueprint class in every world that begins play with `PreBeginPlay` / `PostBeginPlay` (the UE4SS BPModLoader convention). Plugin unload never unmounts; `Unmount` is the caller's risk while objects from the pak are alive. All calls run on the game thread (inline from `PluginInit`, queued and waited on elsewhere). This game is IoStore: a bare `.pak` of `.uasset`s mounts and loads nothing. `PLUGIN_PAK_ORDER_DEFAULT` resolves to 100. Appended at the end of `IPluginHooks`: MIN remains 66. |
-
 | v68     | no          | **Typed and unique pattern scanning, plus a behaviour change that reaches older plugins.** Added `PluginScanKind`, `PluginScanFlags`, `PluginScanRequest` and `IPluginHookScanner::Resolve`, appended at the bottom of the struct so MIN stays at 66 and existing plugins compile unchanged. A pattern must now match **exactly once** -- a second match refuses the plugin, where previously the first match won silently and was memoized into `scan_cache.ini`. `Resolve` additionally checks the resolved address against the executable's structure (`FUNCTION_START` against the `.pdata` exception directory and a 14-byte minimum so a detour fits, `IN_FUNCTION`, `CODE`, `DATA`, `VTABLE`, or `ANY` to opt out); `PLUGIN_SCAN_UNSPECIFIED` is 0 and is refused, so a request that forgets to declare a kind gets a message rather than the weakest check. `resultOffset` shifts the match before the kind check; `followRel32At` (with `PLUGIN_SCAN_FLAG_FOLLOW_REL32`) decodes an `E8`/`E9` and resolves to its target, which then gets the kind check too. Failure reports now list every match with its section, its containing function and its symbol if a PDB is present. Scans read through the loader's own hooks, so a pattern anchored on an already-hooked function still matches and a pattern containing `FF 25 00 00 00 00` no longer matches the loader's stubs. `hooks->Hooks->Install` gained multi-owner chaining: several owners can hook one address, `original` is a loader thunk that calls the next link, and `Remove` restores the original bytes only when the last link goes. The four pre-existing `Resolve*` entry points still work, scanning with `PLUGIN_SCAN_ANY`. MIN remains 66. |
+| v69     | no          | Added `IPluginConsole::ExecuteWithEngine`, appended at the bottom of `IPluginConsole`. `Execute` only runs registered commands, so a plugin bridging a remote console (RCON, an HTTP route) could not reach cvars, `log`, or the `CrRepGraph.*` / `Net.*` families. `ExecuteWithEngine` takes a line exactly as typed into the `-console` window -- registry first, engine otherwise, leading `!` for engine-only -- and runs **every** command on the game thread, so both callbacks always fire from there. An unknown command is an `Error` line; `false` means only a null/empty argument. `Execute` is unchanged (a v63 plugin may rely on its `false` meaning "not a registered command"). See [hooks->Console](#hooks-console). MIN remains 66. |
+| v70     | **yes**     | **Mouse wheel input, and `FreeTexture` made safe to call at any time.** Added `PluginWheelModifiers`, `PluginMouseWheelEvent`, `PluginMouseWheelCallback` and `IPluginInputEvents::RegisterMouseWheel` / `UnregisterMouseWheel` (appended at the bottom of `IPluginInputEvents`). Handlers see the wheel during normal gameplay -- not only while a ModLoader window has capture, which is all `GetMouseWheel` could offer -- with sided modifiers, raw and notch deltas for both axes and the cursor position, and can return `true` to consume the event so the game never sees it. Handlers run on the game thread in registration order; the first `true` stops the chain; registrations are dropped on unload/reload. See [hooks->Input](#hooks-input). **Behaviour change (loader-side, reaches older plugins too):** `IPluginImGuiTextures::FreeTexture` now retires the texture -- it stops drawing at once, and the resource and slot are released only after the GPU has finished every frame that could have drawn them. Freeing on the spot raced the render thread and could GPU-fault. A freed slot becomes reusable a frame or two later. See [hooks->ImGuiTextures](#hooks-imguitextures). The additions themselves are layout-safe, but MIN was then raised to 70, so **every plugin must be rebuilt against the v70 header**. |
 
-The current `PLUGIN_INTERFACE_VERSION_MIN` is **66** and `PLUGIN_INTERFACE_VERSION_MAX` is **68** (see `plugin_interface.h` for the authoritative value and full per-version changelog comments).
+The current `PLUGIN_INTERFACE_VERSION_MIN` is **70** and `PLUGIN_INTERFACE_VERSION_MAX` is **70** (see `plugin_interface.h` for the authoritative value and full per-version changelog comments).
 
 ---
 
