@@ -682,8 +682,8 @@
 //      BOTTOM of its struct, so nothing a v70 plugin reads by offset moved and
 //      MIN stays at 70.
 //
-//      Added IPluginGameMenu::IsPauseMenuOpen (the game's Escape menu is the
-//      active screen) and IPluginUIEvents::IsOverlayOpen (a loader or plugin
+//      Added IPluginGameMenu::IsPauseMenuOpen (the game's Escape menu is
+//      active) and IPluginUIEvents::IsOverlayOpen (a loader or plugin
 //      window has exclusive input capture). Both are safe from any thread.
 //
 //      Added IModLoaderImGui::IsKeyPressed, taking a Win32 virtual-key code.
@@ -694,7 +694,8 @@
 //      open and no window has exclusive capture, ImGui is fed the mouse (the
 //      game shows its own cursor there), but only a widget with this flag
 //      takes it: it can be hovered, clicked and dragged, and a click on it is
-//      kept from the menu. Every other widget stays click-through, as before.
+//      kept from the menu. Every other widget window stays click-through, as
+//      before (child windows inside it are ImGui windows of their own).
 //      The keyboard stays with the game. Nothing changes under exclusive
 //      capture.
 //
@@ -1806,7 +1807,7 @@ struct IPluginImGuiTextures
 #define PluginWindowFlags_NoMouseInputs     (1 << 9)
 // v71, loader-only (ImGui never sees it): the widget takes the mouse while
 // the game's pause menu is open and no window has exclusive capture. Without
-// it a widget is click-through there.
+// it the widget's window is click-through there; its child windows are not.
 #define PluginWindowFlags_PauseMenuMouseInputs (1 << 30)
 
 // Optional size/position hints for RegisterWidget windows.
@@ -1822,7 +1823,7 @@ struct PluginWindowHints
 	float pivot_y;
 	int   size_cond;
 	int   pos_cond;
-	int   extra_window_flags;  // v31: OR'd into ImGuiWindowFlags; 0 = default
+	int   extra_window_flags;  // v31: OR'd into ImGuiWindowFlags (except PauseMenuMouseInputs); 0 = default
 };
 
 struct PluginPanelDesc
