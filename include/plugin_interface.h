@@ -690,12 +690,13 @@
 //      Keybinds are not dispatched while a text field has focus, so a plugin
 //      with a search box had no way to read Up/Down to move a highlight.
 //
-//      BEHAVIOUR CHANGE, loader-side: while the pause menu is open and no
-//      window has exclusive capture, ImGui is fed the mouse (the game shows
-//      its own cursor there). Plugin widgets drawn over the menu can be
-//      hovered, clicked and dragged; a click on one is kept from the menu,
-//      and the keyboard stays with the game. Pass PluginWindowFlags_NoInputs
-//      for a widget that must stay click-through.
+//      Added PluginWindowFlags_PauseMenuMouseInputs. While the pause menu is
+//      open and no window has exclusive capture, ImGui is fed the mouse (the
+//      game shows its own cursor there), but only a widget with this flag
+//      takes it: it can be hovered, clicked and dragged, and a click on it is
+//      kept from the menu. Every other widget stays click-through, as before.
+//      The keyboard stays with the game. Nothing changes under exclusive
+//      capture.
 //
 #define PLUGIN_INTERFACE_VERSION_MIN 70
 #define PLUGIN_INTERFACE_VERSION_MAX 71
@@ -1671,7 +1672,10 @@ struct IModLoaderImGui
 
 	// --- v71 ---
 	// ImGui::IsKeyPressed for a Win32 virtual-key code (VK_UP, VK_RETURN,
-	// 'A', ...); repeat also reports the OS key-repeat presses while held.
+	// 'A', ...); repeat also reports ImGui's key repeat while held. Use the
+	// sided modifier codes (VK_LSHIFT, VK_RCONTROL, ...). VK_SHIFT,
+	// VK_CONTROL, VK_MENU and the VK_OEM_* keys other than VK_OEM_COMMA and
+	// VK_OEM_PERIOD always report false; VK_RETURN is the main Enter key only.
 	// ImGui sees every key the game window receives, so this works where a
 	// keybind does not: while one of your text fields has focus. Call it from
 	// your render callback, gated on your window being focused, or it fires
@@ -1800,6 +1804,10 @@ struct IPluginImGuiTextures
 #define PluginWindowFlags_NoBackground      (1 << 7)
 #define PluginWindowFlags_NoSavedSettings   (1 << 8)
 #define PluginWindowFlags_NoMouseInputs     (1 << 9)
+// v71, loader-only (ImGui never sees it): the widget takes the mouse while
+// the game's pause menu is open and no window has exclusive capture. Without
+// it a widget is click-through there.
+#define PluginWindowFlags_PauseMenuMouseInputs (1 << 30)
 
 // Optional size/position hints for RegisterWidget windows.
 // Set width/height to 0 for no size hint. Set pos_x/pos_y to -1 to skip positioning.
@@ -2751,8 +2759,10 @@ struct IPluginGameMenu
 	bool (*IsAvailable)();
 
 	// --- v71 ---
-	// True while the game's pause menu (the Escape screen) is the active
-	// screen; false on its sub-screens, in the main menu and in play. Sampled
+	// True while the game's pause menu (the Escape screen) is active, as its
+	// CommonUI activation flag reports; false in the main menu and in play.
+	// On a screen the menu opens (options and so on) the game decides whether
+	// that flag stays set, so do not rely on either answer there. Sampled
 	// once per game tick, so it lags by up to a frame. Safe from any thread.
 	// Always false when the pause hook did not install.
 	bool (*IsPauseMenuOpen)();
