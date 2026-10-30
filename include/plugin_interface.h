@@ -677,9 +677,29 @@
 //      difference except that the crash is gone and a freed slot becomes
 //      reusable a frame or two later.
 //
+// v71 (2026-10-30): Read-only UI state, so a plugin can tell what is on
+//      screen without detecting it itself. Every addition is appended at the
+//      BOTTOM of its struct, so nothing a v70 plugin reads by offset moved and
+//      MIN stays at 70.
+//
+//      Added IPluginGameMenu::IsPauseMenuOpen (the game's Escape menu is the
+//      active screen) and IPluginUIEvents::IsOverlayOpen (a loader or plugin
+//      window has exclusive input capture). Both are safe from any thread.
+//
+//      Added IModLoaderImGui::IsKeyPressed, taking a Win32 virtual-key code.
+//      Keybinds are not dispatched while a text field has focus, so a plugin
+//      with a search box had no way to read Up/Down to move a highlight.
+//
+//      BEHAVIOUR CHANGE, loader-side: while the pause menu is open and no
+//      window has exclusive capture, ImGui is fed the mouse (the game shows
+//      its own cursor there). Plugin widgets drawn over the menu can be
+//      hovered, clicked and dragged; a click on one is kept from the menu,
+//      and the keyboard stays with the game. Pass PluginWindowFlags_NoInputs
+//      for a widget that must stay click-through.
+//
 #define PLUGIN_INTERFACE_VERSION_MIN 70
-#define PLUGIN_INTERFACE_VERSION_MAX 70
-#define PLUGIN_INTERFACE_VERSION 70
+#define PLUGIN_INTERFACE_VERSION_MAX 71
+#define PLUGIN_INTERFACE_VERSION 71
 
 enum class PluginLogLevel { Trace = 0, Debug = 1, Info = 2, Warn = 3, Error = 4 };
 enum class ConfigValueType { String, Integer, Float, Boolean, Keybind };
@@ -1648,6 +1668,15 @@ struct IModLoaderImGui
 	// IPluginInputEvents::RegisterMouseWheel (v70) for the wheel at any time.
 	float (*GetMouseWheel)();
 	float (*GetMouseWheelH)();
+
+	// --- v71 ---
+	// ImGui::IsKeyPressed for a Win32 virtual-key code (VK_UP, VK_RETURN,
+	// 'A', ...); repeat also reports the OS key-repeat presses while held.
+	// ImGui sees every key the game window receives, so this works where a
+	// keybind does not: while one of your text fields has focus. Call it from
+	// your render callback, gated on your window being focused, or it fires
+	// for keys meant for the game.
+	bool (*IsKeyPressed)(int vk, bool repeat);
 };
 
 typedef void (*PluginImGuiRenderCallback)(IModLoaderImGui* imgui);
@@ -1860,6 +1889,13 @@ struct IPluginUIEvents
 	// including during PluginShutdown.
 	void* (*AcquireInputPassthrough)();
 	void  (*ReleaseInputPassthrough)(void* token);
+
+	// --- v71 ---
+	// True while a loader or plugin window has exclusive input capture: the
+	// mod loader window, a console or profiler window, any open plugin panel,
+	// or an AcquireInputCapture token. The cursor is ImGui's and the game is
+	// frozen. Safe from any thread.
+	bool (*IsOverlayOpen)();
 };
 
 // ---------------------------------------------------------------------------
@@ -2713,6 +2749,13 @@ struct IPluginGameMenu
 	// registered, they just will not appear. Worth checking if a menu row is
 	// the only way into your UI.
 	bool (*IsAvailable)();
+
+	// --- v71 ---
+	// True while the game's pause menu (the Escape screen) is the active
+	// screen; false on its sub-screens, in the main menu and in play. Sampled
+	// once per game tick, so it lags by up to a frame. Safe from any thread.
+	// Always false when the pause hook did not install.
+	bool (*IsPauseMenuOpen)();
 };
 
 // ---------------------------------------------------------------------------
