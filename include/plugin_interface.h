@@ -1033,9 +1033,11 @@ static_assert(offsetof(PluginScanRequest, candidates)     == 56, "v72 starts whe
 //                           so it is right on any build. The size must equal
 //                           the request's.
 //   PLUGIN_FIELD_NATIVE     a member reflection does not describe. The offset
-//                           comes from the candidate row for the running
-//                           changelist, or builtOffset on builtCL. On any other
-//                           build it fails.
+//                           comes from the row for the running changelist, or
+//                           builtOffset on builtCL. On any other build it
+//                           fails. The member must also lie inside its class
+//                           as the running game reflects the class, or it
+//                           fails.
 //   PLUGIN_FIELD_CHECK      something the plugin keeps using at its compiled
 //                           offset or size (a struct copied by value, an array
 //                           stride). Fails unless the running build matches it.
@@ -1047,6 +1049,13 @@ static_assert(offsetof(PluginScanRequest, candidates)     == 56, "v72 starts whe
 //
 // member null asks for the size of className itself (with CHECK: that it is
 // still `size`).
+//
+// The rows are the loader's own version map's first, under the request's key,
+// when that key names the same class and member (or a member the map records
+// as renamed), then the request's candidates for any changelist the map has
+// no row for. A candidate that disagrees with the map's row for its changelist
+// fails the request. The dedicated server reads no reflection: there only the
+// request's own candidates count, and a native member is not bounded.
 // ---------------------------------------------------------------------------
 enum PluginFieldFlags
 {

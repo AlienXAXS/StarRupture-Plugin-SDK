@@ -716,7 +716,9 @@ if (scan->ResolveField(self, &req, &field))
   supers. The member's size must equal `size`. A row for the running changelist must agree with
   reflection, or the request fails; with no row, reflection alone answers.
 - **`PLUGIN_FIELD_NATIVE`**: a member reflection does not describe. The row for the running
-  changelist answers, or `builtOffset` on `builtCL`. On any other build the request fails.
+  changelist answers, or `builtOffset` on `builtCL`. On any other build the request fails. The
+  member must also lie inside its class as the game reflects the class (offset plus size within the
+  class's size), or the request fails.
 - **`PLUGIN_FIELD_CHECK`**: the value must also equal what you were compiled with: `builtOffset`
   (a bitfield: its `builtCL` row), or with `member` null the class size.
 - **`PLUGIN_FIELD_BITFIELD`**: the member must be a bool; `boolMask` is filled in.
@@ -725,12 +727,22 @@ if (scan->ResolveField(self, &req, &field))
 the member name is matched exactly. Reflected fields are read on the client only: on a dedicated
 server they fail, so ask for them in your client build.
 
+The rows come from the loader's own version map first, when it has the request's `key` and that key
+names the same class and member (or the member one of its rows records as renamed); your
+`candidates` add any changelist the map has no row for. A candidate that disagrees with the map's
+row for the same changelist fails the request, and a key that names another member is set aside
+with a log line. So a member the map holds resolves on a new build with no row of yours. The
+dedicated server uses your candidates only and does not bound a native member.
+
 A failure is recorded against your plugin like a missed pattern, so it is refused with the reason
 in the failure window. The log has one line per field:
 
 ```
-[Map] MyPlugin: ACrCrafter::CraftComponent: CL-128786 row, as reflected (0x6E0/0x8)
-[Map] MyPlugin: ACrCrafter::CraftComponent: refused: the CL-128786 row says 0x6D8/0x8, the game says 0x6E0/0x8
+[Map] MyPlugin: ACrCrafter::CraftComponent: loader map, CL-128786 row, as reflected (0x6E0/0x8)
+[Map] MyPlugin: ACrPackageTransportReplicator::SendingTime: loader map, CL-128786 row (0x2C0/0x4)
+[Map] MyPlugin: MyClass::MyMember: refused: the CL-128786 row says 0x6D8/0x8, the game says 0x6E0/0x8
+[Map] MyPlugin: ACrCrafter::CraftComponent: refused: the loader map's CL-128786 row says 0x6E0/0x8, the plugin's own says 0x6E8/0x8
+[Map] MyPlugin: MyClass::MyNative: refused: CL-128786 row gives 0x5C4/0x8, past the end of MyClass (0x5C8 bytes on this build)
 ```
 
 #### The function table
