@@ -679,7 +679,8 @@
 //      reusable a frame or two later.
 //
 // v71 (2026-10-30): Read-only UI state, so a plugin can tell what is on
-//      screen without detecting it itself, and two new config entry types.
+//      screen without detecting it itself, two new config entry types, and
+//      per-build locators, field requests and the Game-SDK globals.
 //      Every addition is appended at the BOTTOM of its struct or enum, so
 //      nothing a v70 plugin reads by offset moved and MIN stays at 70.
 //
@@ -719,8 +720,13 @@
 //      GetSdkGlobals, the Game-SDK globals as the loader found them.
 //      PluginScanCandidate and PluginFieldCandidate are passed in arrays with
 //      no stride, so their size is frozen (static_assert below); a later
-//      version that needs more adds a new struct. Every struct this version
-//      appends to has its v70 member offsets pinned by static_assert.
+//      version that needs more adds a new struct. PluginScanRequest,
+//      IPluginHookScanner and IPluginEngineEvents have every v70 member offset
+//      pinned by static_assert; the other structs v71 appends to have their v70
+//      end pinned. A v71 loader built before these were added has neither
+//      ResolveField nor GetSdkGlobals, and neither table has a size field, so a
+//      plugin calling one there jumps past the end of the loader's table:
+//      install the loader that has them before a plugin that calls them.
 //
 #define PLUGIN_INTERFACE_VERSION_MIN 70
 #define PLUGIN_INTERFACE_VERSION_MAX 71
@@ -979,7 +985,10 @@ static_assert(offsetof(PluginScanRequest, candidates)     == 56, "v71 starts whe
 //                           offset or size (a struct copied by value, an array
 //                           stride). Fails unless the running build matches it.
 //   PLUGIN_FIELD_BITFIELD   a bool bitfield: the result is its byte offset and
-//                           boolMask. Combines with NATIVE or CHECK.
+//                           boolMask. Alone, both come from reflection; with
+//                           NATIVE, from the rows. builtOffset is -1, so the
+//                           builtCL row holds the compiled byte and mask, and
+//                           with CHECK the running build must equal that row.
 //
 // member null asks for the size of className itself (with CHECK: that it is
 // still `size`).
