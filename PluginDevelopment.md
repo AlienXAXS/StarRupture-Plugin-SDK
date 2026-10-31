@@ -635,6 +635,52 @@ The log says which rule picked each address:
 A v71 loader refuses a v72 plugin and shows it as needing a newer mod loader, so you never have to
 check whether candidates are supported.
 
+#### Game-class fields (ResolveField)
+
+From v72, `scan->ResolveField` gives the offset of a game-class member on the running build, so a
+game update that moves the member does not turn your read into a read of something else. Call it in
+`OnPluginLoadHooks`, once per member, and use the offset it returns instead of the one you were
+compiled with.
+
+```cpp
+static const PluginFieldCandidate kCraftComponentRows[] = {
+    // changelist, offset, size, boolMask, member if renamed on that build
+    { 127004, 0x6D8, 8, 0, nullptr },
+    { 128786, 0x6E0, 8, 0, nullptr },
+};
+
+PluginFieldRequest req = PLUGIN_FIELD_REQUEST_INIT;
+req.key            = "ACrCrafter::CraftComponent";
+req.className      = "ACrCrafter";
+req.member         = "CraftComponent";
+req.size           = sizeof(SDK::ACrCrafter::CraftComponent);
+req.builtCL        = 127004;
+req.builtOffset    = offsetof(SDK::ACrCrafter, CraftComponent);
+req.candidates     = kCraftComponentRows;
+req.candidateCount = 2;
+PluginFieldResult field{};
+if (scan->ResolveField(self, &req, &field))
+    g_craftComponentOffset = field.offset;
+```
+
+- **Reflected** (no flag): the offset comes from the game's reflection data, found by class (short
+  name, or `/Script/<Module>.<Name>` when two modules share it) and member, in the class or its
+  supers. The member's size must equal `size`. A row for the running changelist must agree with
+  reflection, or the request fails; with no row, reflection alone answers.
+- **`PLUGIN_FIELD_NATIVE`**: a member reflection does not describe. The row for the running
+  changelist answers, or `builtOffset` on `builtCL`. On any other build the request fails.
+- **`PLUGIN_FIELD_CHECK`**: the value must also equal what you were compiled with: `builtOffset`
+  (a bitfield: its `builtCL` row), or with `member` null the class size.
+- **`PLUGIN_FIELD_BITFIELD`**: the member must be a bool; `boolMask` is filled in.
+
+A failure is recorded against your plugin like a missed pattern, so it is refused with the reason
+in the failure window. The log has one line per field:
+
+```
+[Map] MyPlugin: ACrCrafter::CraftComponent: CL-128786 row, as reflected (0x6E0/0x8)
+[Map] MyPlugin: ACrCrafter::CraftComponent: refused: the CL-128786 row says 0x6D8/0x8, the game says 0x6E0/0x8
+```
+
 #### The function table
 
 | Function | Notes |
