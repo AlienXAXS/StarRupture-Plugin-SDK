@@ -679,8 +679,7 @@
 //      reusable a frame or two later.
 //
 // v71 (2026-10-30): Read-only UI state, so a plugin can tell what is on
-//      screen without detecting it itself, two new config entry types, and
-//      per-build locators, field requests and the Game-SDK globals.
+//      screen without detecting it itself, and two new config entry types.
 //      Every addition is appended at the BOTTOM of its struct or enum, so
 //      nothing a v70 plugin reads by offset moved and MIN stays at 70.
 //
@@ -709,7 +708,11 @@
 //      before, and a v70 plugin cannot hand it either new value. A v71 loader
 //      built before these two were added draws both as plain text fields.
 //
-//      Per-build locators, so one plugin build can run on several game builds.
+// v72 (2026-10-31): Per-build locators, field requests and the Game-SDK
+//      globals, so one plugin build can run on several game builds. Every
+//      addition is appended at the BOTTOM of its struct, so nothing a v70 or
+//      v71 plugin reads by offset moved and MIN stays at 70.
+//
 //      Added PluginScanCandidate and, appended to PluginScanRequest,
 //      candidates / candidateCount: the locators a plugin knows for one
 //      hookName on other game builds (PLUGIN_SCAN_REQUEST_INIT sets them to
@@ -721,16 +724,20 @@
 //      PluginScanCandidate and PluginFieldCandidate are passed in arrays with
 //      no stride, so their size is frozen (static_assert below); a later
 //      version that needs more adds a new struct. PluginScanRequest,
-//      IPluginHookScanner and IPluginEngineEvents have every v70 member offset
-//      pinned by static_assert; the other structs v71 appends to have their v70
-//      end pinned. A v71 loader built before these were added has neither
-//      ResolveField nor GetSdkGlobals, and neither table has a size field, so a
-//      plugin calling one there jumps past the end of the loader's table:
-//      install the loader that has them before a plugin that calls them.
+//      IPluginHookScanner and IPluginEngineEvents have every earlier member
+//      offset pinned by static_assert; the structs v71 appends to have their
+//      v70 end pinned.
+//
+//      This is a version of its own, not more of v71, because v71 loaders
+//      already exist without these: their hook scanner and engine event
+//      tables end before ResolveField and GetSdkGlobals, and neither table has
+//      a size field a plugin could check. A v71 loader refuses a v72 plugin
+//      and shows it as needing a newer mod loader, instead of letting it call
+//      past the end of a table.
 //
 #define PLUGIN_INTERFACE_VERSION_MIN 70
-#define PLUGIN_INTERFACE_VERSION_MAX 71
-#define PLUGIN_INTERFACE_VERSION 71
+#define PLUGIN_INTERFACE_VERSION_MAX 72
+#define PLUGIN_INTERFACE_VERSION 72
 
 enum class PluginLogLevel { Trace = 0, Debug = 1, Info = 2, Warn = 3, Error = 4 };
 enum class ConfigValueType { String, Integer, Float, Boolean, Keybind, Choice /* v71 */, Hidden /* v71 */ };
@@ -873,7 +880,7 @@ enum PluginScanFlags
     PLUGIN_SCAN_FLAG_FOLLOW_REL32 = 1 << 1,
 };
 
-// v71. One locator for a hookName, verified on one game build. A plugin hands
+// v72. One locator for a hookName, verified on one game build. A plugin hands
 // the loader every locator it knows through PluginScanRequest::candidates, and
 // the loader picks the one for the build that is running: the row for the
 // running changelist, else only an address every candidate agrees on.
@@ -939,7 +946,7 @@ struct PluginScanRequest
     // 0 means 1.
     uint32_t    vtableSlots;
 
-    // --- v71 ---
+    // --- v72 ---
     // Locators for this hookName on other game builds; null = none, which is
     // the v70 behaviour. pattern, kind and the rest above stay the request:
     // they are what the plugin was built against, and the kind check applies
@@ -964,10 +971,10 @@ static_assert(offsetof(PluginScanRequest, resultOffset)   == 32, "v70 layout");
 static_assert(offsetof(PluginScanRequest, followRel32At)  == 36, "v70 layout");
 static_assert(offsetof(PluginScanRequest, module)         == 40, "v70 layout");
 static_assert(offsetof(PluginScanRequest, vtableSlots)    == 48, "v70 layout");
-static_assert(offsetof(PluginScanRequest, candidates)     == 56, "v71 starts where v70 ended");
+static_assert(offsetof(PluginScanRequest, candidates)     == 56, "v72 starts where v71 ended");
 
 // ---------------------------------------------------------------------------
-// Game-class fields (v71) -- IPluginHookScanner::ResolveField
+// Game-class fields (v72) -- IPluginHookScanner::ResolveField
 //
 // A plugin that reads or writes a member of a game class names it here instead
 // of trusting the offset it was compiled with, so a game update that moves the
@@ -1163,7 +1170,7 @@ struct IPluginHookScanner
 	//     `kind` says it is.
 	uintptr_t (*Resolve)(const IPluginSelf* self, const PluginScanRequest* request);
 
-	// --- v71 ---
+	// --- v72 ---
 
 	// The offset of one game-class member on the running build (see
 	// PluginFieldRequest). True and *result written on success; false on any
@@ -1186,7 +1193,7 @@ static_assert(offsetof(IPluginHookScanner, ReportFailure)                  ==  8
 static_assert(offsetof(IPluginHookScanner, ReportWarning)                  ==  96, "v70 layout");
 static_assert(offsetof(IPluginHookScanner, HasFailures)                    == 104, "v70 layout");
 static_assert(offsetof(IPluginHookScanner, Resolve)                        == 112, "v70 layout");
-static_assert(offsetof(IPluginHookScanner, ResolveField)                   == 120, "v71 starts where v70 ended");
+static_assert(offsetof(IPluginHookScanner, ResolveField)                   == 120, "v72 starts where v71 ended");
 
 typedef void* HookHandle;
 namespace SDK { class UWorld; class UTexture2D; }
@@ -1265,7 +1272,7 @@ struct IPluginMemoryUtils
 	bool  (*IsAllocatorAvailable)();
 };
 
-// v71. The four globals the Game-SDK carries as fixed offsets (Offsets:: in
+// v72. The four globals the Game-SDK carries as fixed offsets (Offsets:: in
 // its Basic.hpp), which are right only for the build the SDK was generated
 // for. Absolute addresses; 0 = that one did not resolve. Each plugin compiles
 // its own copy of the SDK, so the loader handing its copy these values does
@@ -1320,7 +1327,7 @@ struct IPluginEngineEvents
 	uintptr_t (*GetLoadPackageAddress)();
 	uintptr_t (*GetAssetDataFastGetAssetAddress)();
 
-	// --- v71 ---
+	// --- v72 ---
 	// The Game-SDK globals as the loader found them on the running build (see
 	// PluginSdkGlobals). Null when the loader has none to give: a server build,
 	// or a loader that did not resolve them. Valid for the life of the process.
@@ -1344,7 +1351,7 @@ static_assert(offsetof(IPluginEngineEvents, GetFindPackageAddress)              
 static_assert(offsetof(IPluginEngineEvents, GetPackageFullyLoadAddress)           == 112, "v70 layout");
 static_assert(offsetof(IPluginEngineEvents, GetLoadPackageAddress)                == 120, "v70 layout");
 static_assert(offsetof(IPluginEngineEvents, GetAssetDataFastGetAssetAddress)      == 128, "v70 layout");
-static_assert(offsetof(IPluginEngineEvents, GetSdkGlobals)                        == 136, "v71 starts where v70 ended");
+static_assert(offsetof(IPluginEngineEvents, GetSdkGlobals)                        == 136, "v72 starts where v71 ended");
 
 struct IPluginWorldEvents
 {

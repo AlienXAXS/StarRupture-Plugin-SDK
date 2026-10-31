@@ -589,6 +589,51 @@ a pattern anchored on a hooked function's entry still matches, and a pattern con
 wrong, and the first one could silently resolve to an unrelated address that happened to be the
 only visible match.
 
+#### Locators for other game builds
+
+From v72 a `PluginScanRequest` can carry locators for the same function on other game builds, one
+`PluginScanCandidate` per changelist. `pattern`, `kind` and the rest of the request stay what your
+plugin was built against; the candidates add to them. The kind check applies whichever locator is
+picked. Main module only.
+
+```cpp
+static const PluginScanCandidate kFinishCraftingRows[] = {
+    // changelist, PE TimeDateStamp, SizeOfImage, pattern, flags, resultOffset, followRel32At, rva
+    { 127004, 0x6702A1B3, 0x0B5D3000, "40 55 53 56 57 41 56 48 8D 6C 24 ??", 0, 0, -1, 0x3F219B0 },
+    { 128786, 0x6731C4E0, 0x0B61F000, "40 55 53 56 57 41 57 48 8D 6C 24 ??", 0, 0, -1, 0x3F22A10 },
+};
+
+PluginScanRequest req = PLUGIN_SCAN_REQUEST_INIT;
+req.hookName       = "UCrCraftingComponent::FinishCrafting";
+req.pattern        = "40 55 53 56 57 41 56 48 8D 6C 24 ??";
+req.kind           = PLUGIN_SCAN_FUNCTION_START;
+req.candidates     = kFinishCraftingRows;
+req.candidateCount = 2;
+g_finishCrafting = scan->Resolve(self, &req);
+```
+
+The loader picks the address in this order:
+
+1. **The row for the running changelist** (the `CL-<n>` at the end of the game's version string).
+   On the very exe that row was verified on (same `imageStamp` and `imageSize`), it must land on its
+   `rva`; a different answer fails the resolve and nothing else is tried. A row with a null
+   `pattern` is an address only, and counts only on that exe. A row whose pattern is not in the exe
+   at all is skipped with a warning.
+2. **Agreement.** Otherwise every other locator is tried, your own `pattern` included. At least one
+   must resolve, and every one that resolves must give the same address. Two different addresses
+   fail the resolve, and the failure lists what each locator found.
+3. Otherwise the resolve fails, as a miss.
+
+The log says which rule picked each address:
+
+```
+[Map] MyPlugin: UCrCraftingComponent::FinishCrafting: CL-128786 row
+[Map] MyPlugin: UCrCraftingComponent::FinishCrafting: no row for CL-129100; built pattern, CL-128786 row agree
+```
+
+A v71 loader refuses a v72 plugin and shows it as needing a newer mod loader, so you never have to
+check whether candidates are supported.
+
 #### The function table
 
 | Function | Notes |
@@ -2313,8 +2358,10 @@ The loader accepts plugins whose `interfaceVersion` is in `[PLUGIN_INTERFACE_VER
 | v68     | no          | **Typed and unique pattern scanning, plus a behaviour change that reaches older plugins.** Added `PluginScanKind`, `PluginScanFlags`, `PluginScanRequest` and `IPluginHookScanner::Resolve`, appended at the bottom of the struct so MIN stays at 66 and existing plugins compile unchanged. A pattern must now match **exactly once** -- a second match refuses the plugin, where previously the first match won silently and was memoized into `scan_cache.ini`. `Resolve` additionally checks the resolved address against the executable's structure (`FUNCTION_START` against the `.pdata` exception directory and a 14-byte minimum so a detour fits, `IN_FUNCTION`, `CODE`, `DATA`, `VTABLE`, or `ANY` to opt out); `PLUGIN_SCAN_UNSPECIFIED` is 0 and is refused, so a request that forgets to declare a kind gets a message rather than the weakest check. `resultOffset` shifts the match before the kind check; `followRel32At` (with `PLUGIN_SCAN_FLAG_FOLLOW_REL32`) decodes an `E8`/`E9` and resolves to its target, which then gets the kind check too. Failure reports now list every match with its section, its containing function and its symbol if a PDB is present. Scans read through the loader's own hooks, so a pattern anchored on an already-hooked function still matches and a pattern containing `FF 25 00 00 00 00` no longer matches the loader's stubs. `hooks->Hooks->Install` gained multi-owner chaining: several owners can hook one address, `original` is a loader thunk that calls the next link, and `Remove` restores the original bytes only when the last link goes. The four pre-existing `Resolve*` entry points still work, scanning with `PLUGIN_SCAN_ANY`. MIN remains 66. |
 | v69     | no          | Added `IPluginConsole::ExecuteWithEngine`, appended at the bottom of `IPluginConsole`. `Execute` only runs registered commands, so a plugin bridging a remote console (RCON, an HTTP route) could not reach cvars, `log`, or the `CrRepGraph.*` / `Net.*` families. `ExecuteWithEngine` takes a line exactly as typed into the `-console` window -- registry first, engine otherwise, leading `!` for engine-only -- and runs **every** command on the game thread, so both callbacks always fire from there. An unknown command is an `Error` line; `false` means only a null/empty argument. `Execute` is unchanged (a v63 plugin may rely on its `false` meaning "not a registered command"). See [hooks->Console](#hooks-console). MIN remains 66. |
 | v70     | **yes**     | **Mouse wheel input, and `FreeTexture` made safe to call at any time.** Added `PluginWheelModifiers`, `PluginMouseWheelEvent`, `PluginMouseWheelCallback` and `IPluginInputEvents::RegisterMouseWheel` / `UnregisterMouseWheel` (appended at the bottom of `IPluginInputEvents`). Handlers see the wheel during normal gameplay -- not only while a ModLoader window has capture, which is all `GetMouseWheel` could offer -- with sided modifiers, raw and notch deltas for both axes and the cursor position, and can return `true` to consume the event so the game never sees it. Handlers run on the game thread in registration order; the first `true` stops the chain; registrations are dropped on unload/reload. See [hooks->Input](#hooks-input). **Behaviour change (loader-side, reaches older plugins too):** `IPluginImGuiTextures::FreeTexture` now retires the texture -- it stops drawing at once, and the resource and slot are released only after the GPU has finished every frame that could have drawn them. Freeing on the spot raced the render thread and could GPU-fault. A freed slot becomes reusable a frame or two later. See [hooks->ImGuiTextures](#hooks-imguitextures). The additions themselves are layout-safe, but MIN was then raised to 70, so **every plugin must be rebuilt against the v70 header**. |
+| v71     | no          | **Read-only UI state and two config entry types.** Added `IPluginGameMenu::IsPauseMenuOpen`, `IPluginUIEvents::IsOverlayOpen`, `IModLoaderImGui::IsKeyPressed` (a Win32 virtual-key code, readable while a text field has focus), `PluginWindowFlags_PauseMenuMouseInputs` (a widget that takes the mouse while the pause menu is open), and `ConfigValueType::Choice` / `ConfigValueType::Hidden` (see [Config System](#config-system-plugin_configh-pattern)). Appended at the bottom of each struct or enum: MIN remains 70. |
+| v72     | no          | **Per-build locators, field requests and the Game-SDK globals**, so one plugin build can run on several game builds. Added `PluginScanCandidate` and, appended to `PluginScanRequest`, `candidates` / `candidateCount`: the locators a plugin knows for one hookName on other game builds. The loader uses the row for the running changelist; with none, it accepts only an address every locator that matches agrees on (see [Locators for other game builds](#locators-for-other-game-builds)). Added `PluginFieldRequest`, `PluginFieldCandidate`, `PluginFieldResult` and `IPluginHookScanner::ResolveField` (the offset of a game-class member on the running build), and `PluginSdkGlobals` / `IPluginEngineEvents::GetSdkGlobals`. Its own version because v71 loaders exist without the two new slots: a v71 loader refuses a v72 plugin and lists it as **Needs loader**, instead of letting it call past the end of a table. MIN remains 70. |
 
-The current `PLUGIN_INTERFACE_VERSION_MIN` is **70** and `PLUGIN_INTERFACE_VERSION_MAX` is **70** (see `plugin_interface.h` for the authoritative value and full per-version changelog comments).
+The current `PLUGIN_INTERFACE_VERSION_MIN` is **70** and `PLUGIN_INTERFACE_VERSION_MAX` is **72** (see `plugin_interface.h` for the authoritative value and full per-version changelog comments).
 
 ---
 
