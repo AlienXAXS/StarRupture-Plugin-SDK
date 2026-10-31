@@ -1355,8 +1355,10 @@ struct IPluginEngineEvents
 
 	// True when the caller is on the game thread, where UObjects may be
 	// touched. False on every thread until the game's first tick, the game
-	// thread included (PluginInit runs before it), so read false as "post it
-	// with PostToGameThread", never as "this is a worker thread".
+	// thread included, so a PluginInit at startup reads false; one run by a
+	// RELOAD runs on the game thread after that tick and reads true. Read
+	// false as "post it with PostToGameThread", never as "this is a worker
+	// thread".
 	bool (*IsGameThread)();
 };
 
@@ -1573,8 +1575,11 @@ struct IPluginInputEvents
 	// --- v72 ---
 	// True while every key of `keyName` is held: a name as RegisterKeybindByName
 	// takes it ("F5", "Shift+K"), with the same modifier rule as its callbacks.
-	// False while the game window does not have focus, and for a name the
-	// keybind table does not know. Any thread; allocates nothing.
+	// A name with modifiers needs exactly those held ("Shift+K" reads false
+	// while Ctrl is down as well); a name without any ignores them. False
+	// while the game window does not have focus, before the game window
+	// exists (the overlay's first frame), and for a name the keybind table
+	// does not know. Any thread; allocates nothing.
 	bool (*IsKeyHeld)(const char* keyName);
 };
 
