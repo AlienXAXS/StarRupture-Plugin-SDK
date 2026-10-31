@@ -718,7 +718,8 @@ if (scan->ResolveField(self, &req, &field))
 - **`PLUGIN_FIELD_NATIVE`**: a member reflection does not describe. The row for the running
   changelist answers, or `builtOffset` on `builtCL`. On any other build the request fails. The
   member must also lie inside its class as the game reflects the class (offset plus size within the
-  class's size), or the request fails.
+  class's size), or the request fails. So on the client a native member's class must be one the game's
+  reflection knows.
 - **`PLUGIN_FIELD_CHECK`**: the value must also equal what you were compiled with: `builtOffset`
   (a bitfield: its `builtCL` row), or with `member` null the class size.
 - **`PLUGIN_FIELD_BITFIELD`**: the member must be a bool; `boolMask` is filled in.
