@@ -735,9 +735,10 @@
 //      and shows it as needing a newer mod loader, instead of letting it call
 //      past the end of a table.
 //
-//      Also in v72: PLUGIN_SCAN_FLAG_MAP_KEY (hookName names an entry in the
-//      loader's own version map, and pattern becomes this plugin's fallback,
-//      or null); a tail on PluginInfo, gameBuiltCL and mapFlags, that says
+//      Also in v72: PLUGIN_SCAN_FLAG_MAP_KEY (hookName names a key in the
+//      loader's own version map, a global one or this plugin's own site, and
+//      pattern and candidates become this plugin's fallback, or null); a tail
+//      on PluginInfo, gameBuiltCL and mapFlags, that says
 //      which game build the plugin's Game-SDK was generated from (filled by
 //      default from PLUGIN_GAME_BUILT_CL, so an unchanged six-member
 //      initializer still compiles and carries it); IPluginInputEvents::
@@ -891,12 +892,37 @@ enum PluginScanFlags
     // for one.
     PLUGIN_SCAN_FLAG_FOLLOW_REL32 = 1 << 1,
 
-    // v72. hookName is a key in the loader's version map: "Class::Function"
-    // or a global's name for FUNCTION_START and DATA, the plugin's own site
-    // name for the other kinds. The loader answers from its map for the
-    // running build first; pattern (and candidates) are the plugin's own
-    // fallback and may be null. A key the map does not hold falls back to
-    // them, and with neither a pattern nor candidates is a recorded failure.
+    // v72. hookName is a key in the loader's version map, and pattern and
+    // candidates are this plugin's own fallback, each of which may be null.
+    // Game exe only. The dedicated server's map holds no rows, so there every
+    // key falls back.
+    //
+    // For FUNCTION_START and DATA the key is global, the same for every
+    // plugin: "Class::Function" or a global's name, never with a '/'. For any
+    // other kind it is this plugin's own site, "<PluginInfo name>/<hookName>",
+    // kept under a fingerprint of the request: kind, pattern (as the loader
+    // parses it), resultOffset and followRel32At (-1 without
+    // PLUGIN_SCAN_FLAG_FOLLOW_REL32). A site names no symbol, so its rows are
+    // right only for the request they were verified with: a site key needs
+    // its own pattern, and a changed pattern or offset reads none of the old
+    // rows.
+    //
+    // The map's row for the running build is tried first, then the
+    // candidates' row for it, then an address every locator (pattern
+    // included) agrees on. When a candidate with an rva is for this very exe
+    // (changelist, stamp and size), the map's pick must land on that rva, or
+    // the request fails as AMBIGUOUS. Rows the map holds under the key for
+    // another kind, or for a site's other fingerprint, are not used. A key
+    // with no rows the request can use runs on pattern and candidates alone,
+    // and with neither is a recorded failure.
+    //
+    // Refused, as a recorded failure with nothing else tried: a key the map
+    // marks absent on the running build for this request (a global key for
+    // the plugins it lists, a site for its fingerprint); any key from a
+    // plugin named ModLoader, whose keys are the loader's own; a site key
+    // from either of two loaded plugins with the same name, whose sites the
+    // map cannot tell apart. One "[Map]" log line per request says which row
+    // answered it, or why not.
     PLUGIN_SCAN_FLAG_MAP_KEY = 1 << 2,
 };
 
@@ -941,6 +967,7 @@ struct PluginScanRequest
     const char* hookName;
 
     // IDA-style AOB: "48 89 5C 24 ?? 57 48 83 EC 20", ?? = any byte.
+    // null only with PLUGIN_SCAN_FLAG_MAP_KEY (v72).
     const char* pattern;
 
     int         kind;           // PluginScanKind

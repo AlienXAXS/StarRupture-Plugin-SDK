@@ -635,6 +635,53 @@ The log says which rule picked each address:
 A v71 loader refuses a v72 plugin and shows it as needing a newer mod loader, so you never have to
 check whether candidates are supported.
 
+#### Map keys (PLUGIN_SCAN_FLAG_MAP_KEY)
+
+From v72 the loader carries its own version map: rows for each game build it supports, kept up to
+date by its CI. With `PLUGIN_SCAN_FLAG_MAP_KEY`, `hookName` is a key in that map, and `pattern` and
+`candidates` become your own fallback, each of which may be null. Main module only; the dedicated
+server's map holds no rows, so there every key falls back.
+
+```cpp
+PluginScanRequest req = PLUGIN_SCAN_REQUEST_INIT;
+req.hookName = "UWorld::BeginPlay";              // a global key
+req.pattern  = "40 53 48 83 EC 20 48 8B D9 E8 ?? ?? ?? ??"; // your fallback, or nullptr
+req.kind     = PLUGIN_SCAN_FUNCTION_START;
+req.flags    = PLUGIN_SCAN_FLAG_MAP_KEY;
+g_beginPlay = scan->Resolve(self, &req);
+```
+
+**Keys.** For `FUNCTION_START` and `DATA` the key is global, the same for every plugin:
+`"Class::Function"` or a global's name, never with a `/`. For any other kind the key is your
+plugin's own site, `<PluginInfo name>/<hookName>`, kept under a fingerprint of the request: its
+kind, its pattern as the loader parses it, `resultOffset` and `followRel32At` (-1 without
+`PLUGIN_SCAN_FLAG_FOLLOW_REL32`). A site names no symbol, so its rows are right only for the request
+they were verified with: a site key needs its own pattern, and changing the pattern or an offset
+reads none of the old rows until the map has rows for the new request.
+
+**Order.** The map's row for the running build first, then your candidates' row for it, then an
+address every locator (your pattern included) agrees on, as in
+[Locators for other game builds](#locators-for-other-game-builds). When one of your candidates has
+an `rva` and is for this very exe, the map's pick must land on that `rva`, or the resolve fails as
+AMBIGUOUS. Rows the map holds under the key for another kind, or for another fingerprint of a site,
+are not used. A key with no rows your request can use runs on your pattern and candidates alone,
+and fails with neither.
+
+**Refused**, as a failure with nothing else tried:
+- a key the map marks absent on the running build for your request (a global key for the plugins
+  that row lists, a site for its fingerprint);
+- any key from a plugin named `ModLoader`: the map's `ModLoader/` keys are the loader's own;
+- a site key from either of two loaded plugins with the same name, because the map cannot tell
+  their sites apart. Global keys still work for both.
+
+Each request writes one `[Map]` line:
+
+```
+[Map] MyPlugin: UWorld::BeginPlay: loader map, CL-128786 row
+[Map] MyPlugin: GWorld: loader map row is for another kind (data); own pattern
+[Map] MyPlugin: Spawner: another loaded plugin is also named MyPlugin, so neither reads site keys (refused)
+```
+
 #### Game-class fields (ResolveField)
 
 From v72, `scan->ResolveField` gives the offset of a game-class member on the running build, so a
@@ -2447,7 +2494,7 @@ The loader accepts plugins whose `interfaceVersion` is in `[PLUGIN_INTERFACE_VER
 | v69     | no          | Added `IPluginConsole::ExecuteWithEngine`, appended at the bottom of `IPluginConsole`. `Execute` only runs registered commands, so a plugin bridging a remote console (RCON, an HTTP route) could not reach cvars, `log`, or the `CrRepGraph.*` / `Net.*` families. `ExecuteWithEngine` takes a line exactly as typed into the `-console` window -- registry first, engine otherwise, leading `!` for engine-only -- and runs **every** command on the game thread, so both callbacks always fire from there. An unknown command is an `Error` line; `false` means only a null/empty argument. `Execute` is unchanged (a v63 plugin may rely on its `false` meaning "not a registered command"). See [hooks->Console](#hooks-console). MIN remains 66. |
 | v70     | **yes**     | **Mouse wheel input, and `FreeTexture` made safe to call at any time.** Added `PluginWheelModifiers`, `PluginMouseWheelEvent`, `PluginMouseWheelCallback` and `IPluginInputEvents::RegisterMouseWheel` / `UnregisterMouseWheel` (appended at the bottom of `IPluginInputEvents`). Handlers see the wheel during normal gameplay -- not only while a ModLoader window has capture, which is all `GetMouseWheel` could offer -- with sided modifiers, raw and notch deltas for both axes and the cursor position, and can return `true` to consume the event so the game never sees it. Handlers run on the game thread in registration order; the first `true` stops the chain; registrations are dropped on unload/reload. See [hooks->Input](#hooks-input). **Behaviour change (loader-side, reaches older plugins too):** `IPluginImGuiTextures::FreeTexture` now retires the texture -- it stops drawing at once, and the resource and slot are released only after the GPU has finished every frame that could have drawn them. Freeing on the spot raced the render thread and could GPU-fault. A freed slot becomes reusable a frame or two later. See [hooks->ImGuiTextures](#hooks-imguitextures). The additions themselves are layout-safe, but MIN was then raised to 70, so **every plugin must be rebuilt against the v70 header**. |
 | v71     | no          | **Read-only UI state and two config entry types.** Added `IPluginGameMenu::IsPauseMenuOpen`, `IPluginUIEvents::IsOverlayOpen`, `IModLoaderImGui::IsKeyPressed` (a Win32 virtual-key code, readable while a text field has focus), `PluginWindowFlags_PauseMenuMouseInputs` (a widget that takes the mouse while the pause menu is open), and `ConfigValueType::Choice` / `ConfigValueType::Hidden` (see [Config System](#config-system-plugin_configh-pattern)). Appended at the bottom of each struct or enum: MIN remains 70. |
-| v72     | no          | **Per-build locators, field requests and the Game-SDK globals**, so one plugin build can run on several game builds. Added `PluginScanCandidate` and, appended to `PluginScanRequest`, `candidates` / `candidateCount`: the locators a plugin knows for one hookName on other game builds. The loader uses the row for the running changelist; with none, it accepts only an address every locator that matches agrees on (see [Locators for other game builds](#locators-for-other-game-builds)). Added `PluginFieldRequest`, `PluginFieldCandidate`, `PluginFieldResult` and `IPluginHookScanner::ResolveField` (the offset of a game-class member on the running build), and `PluginSdkGlobals` / `IPluginEngineEvents::GetSdkGlobals`. Added `IPluginInputEvents::IsKeyHeld` (polls a keybind name; aware of window focus and text fields; see [hooks->Input](#hooks-input)) and `IPluginEngineEvents::IsGameThread` (see [hooks->Engine](#hooks-engine)). Its own version because v71 loaders exist without these slots: a v71 loader refuses a v72 plugin and lists it as **Needs loader**, instead of letting it call past the end of a table. MIN remains 70. |
+| v72     | no          | **Per-build locators, field requests and the Game-SDK globals**, so one plugin build can run on several game builds. Added `PluginScanCandidate` and, appended to `PluginScanRequest`, `candidates` / `candidateCount`: the locators a plugin knows for one hookName on other game builds. The loader uses the row for the running changelist; with none, it accepts only an address every locator that matches agrees on (see [Locators for other game builds](#locators-for-other-game-builds)). Added `PluginFieldRequest`, `PluginFieldCandidate`, `PluginFieldResult` and `IPluginHookScanner::ResolveField` (the offset of a game-class member on the running build), and `PluginSdkGlobals` / `IPluginEngineEvents::GetSdkGlobals`. Added `PLUGIN_SCAN_FLAG_MAP_KEY`: `hookName` names a key in the loader's own version map, and `pattern` and `candidates` become the plugin's fallback (see [Map keys](#map-keys-plugin_scan_flag_map_key)). Added `IPluginInputEvents::IsKeyHeld` (polls a keybind name; aware of window focus and text fields; see [hooks->Input](#hooks-input)) and `IPluginEngineEvents::IsGameThread` (see [hooks->Engine](#hooks-engine)). Its own version because v71 loaders exist without these slots: a v71 loader refuses a v72 plugin and lists it as **Needs loader**, instead of letting it call past the end of a table. MIN remains 70. |
 
 The current `PLUGIN_INTERFACE_VERSION_MIN` is **70** and `PLUGIN_INTERFACE_VERSION_MAX` is **72** (see `plugin_interface.h` for the authoritative value and full per-version changelog comments).
 
