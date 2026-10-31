@@ -221,10 +221,10 @@ Two more types (interface v71) change how the loader's Config tab draws an entry
     { "Map", "WindowX", ConfigValueType::Hidden, "-1",   "Window position; -1 centres it"   },
 ```
 
-- **Choice** stores the choice as written. The page matches a stored value ignoring case and shows one that is none of the choices as the default, so read it the same way.
-- **Hidden** is state the plugin saves by itself. Each section holding any ends with a **Saved state** row whose **Clear** button sets them back to their defaults, calling the plugin's config-change callback for each value it changes. Listen for those keys if the plugin keeps the values in memory.
+- **Choice** stores the choice as written; spaces around each `|` are ignored. The page matches a stored value ignoring case and shows one that is none of the choices as the default, so read it the same way.
+- **Hidden** is state the plugin saves by itself. Each section holding any ends with a **Saved state** row whose **Clear** button sets them back to their defaults, calling the plugin's config-change callback for each value it changes. A number counts as its default when it has the same value, so `WriteFloat`'s `-1.000000` matches a default of `"-1"`. Listen for those keys if the plugin keeps the values in memory.
 
-A v70 loader refuses a v71 plugin, so a plugin using them never meets a loader that does not know them.
+A v70 loader refuses a v71 plugin. A v71 loader built before these two types were added draws a Choice as a text field, with the choices left in its description, and a Hidden entry as a text field; the values still read and write as text.
 
 ---
 

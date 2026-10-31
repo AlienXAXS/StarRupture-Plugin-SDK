@@ -704,7 +704,8 @@
 //      page offers to clear instead of drawing a field for). See ConfigEntry.
 //      ConfigEntry itself is unchanged: a Choice carries its choices in
 //      description, so the loader reads a v70 plugin's entry array exactly as
-//      before, and a v70 plugin cannot hand it either new value.
+//      before, and a v70 plugin cannot hand it either new value. A v71 loader
+//      built before these two were added draws both as plain text fields.
 //
 #define PLUGIN_INTERFACE_VERSION_MIN 70
 #define PLUGIN_INTERFACE_VERSION_MAX 71
@@ -734,16 +735,18 @@ enum class EPluginNetMode : uint8_t
 // Choice (v71): one of a fixed set of strings, drawn on the config page as a
 //   dropdown. description holds the description, then each choice after a '|':
 //     "Planner the button opens|StarRupture Planner|starrupturecalc.com|Custom"
-//   The INI stores the choice as written. A stored value is matched ignoring
-//   case, and one that matches no choice is shown as defaultValue, so read it
-//   the same way. defaultValue should be one of the choices.
+//   Spaces around each '|' are ignored. The INI stores the choice as written.
+//   A stored value is matched ignoring case, and one that matches no choice is
+//   shown as defaultValue, so read it the same way. defaultValue should be one
+//   of the choices.
 //
 // Hidden (v71): a value the plugin saves by itself, such as where a window
 //   was dragged. The config page draws no field for it. Instead, a section
 //   holding Hidden entries ends with one Clear button that sets all of them
 //   back to defaultValue, firing OnConfigChanged for each one it changes. The
 //   INI stores the text as written; read and write it with whichever
-//   Read*/Write* suits the value.
+//   Read*/Write* suits the value. A number counts as its default when it has
+//   the same value, so WriteFloat's "-1.000000" matches a default of "-1".
 struct ConfigEntry
 {
 	const char* section;
