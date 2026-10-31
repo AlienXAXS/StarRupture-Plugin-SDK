@@ -1579,11 +1579,16 @@ struct IPluginInputEvents
 	// replaces an earlier one, so "Ctlr+K" reads as K; false when no known
 	// key is left. Modifiers follow its callbacks' rule: a name with any needs
 	// exactly those held ("Shift+K" is false while Ctrl is down as well), a
-	// name without any ignores them. Other plugins' binds do not change the
-	// answer, and mouse buttons are the logical ones, as the callbacks see
-	// them. False while the game window does not have focus, and while there
-	// is no game window to check: before the overlay's first frame, or all
-	// session with the overlay off. Any thread; allocates nothing.
+	// name without any ignores them. So do text fields: a key pressed while
+	// one has focus (chat, a save name, an overlay input box) reads as not
+	// held until it is released, Escape and mouse buttons excepted, and a key
+	// already held when the field took focus stays held. The loader watches a
+	// key for this from the first call that names it. Other plugins' binds do
+	// not change the answer, and mouse buttons are the logical ones, as the
+	// callbacks see them. False while the game window does not have focus,
+	// and while there is no game window to check: before the overlay's first
+	// frame, or all session with the overlay off. Any thread; allocates
+	// nothing.
 	bool (*IsKeyHeld)(const char* keyName);
 };
 
