@@ -1,6 +1,7 @@
 #pragma once
 
 #include <windows.h>
+#include <cstddef>
 #include <cstdint>
 
 // v19: Introduced IPluginSelf.  MIN bumped to 19.
@@ -707,6 +708,20 @@
 //      before, and a v70 plugin cannot hand it either new value. A v71 loader
 //      built before these two were added draws both as plain text fields.
 //
+//      Per-build locators, so one plugin build can run on several game builds.
+//      Added PluginScanCandidate and, appended to PluginScanRequest,
+//      candidates / candidateCount: the locators a plugin knows for one
+//      hookName on other game builds (PLUGIN_SCAN_REQUEST_INIT sets them to
+//      null, 0, which is the v70 behaviour). Added PluginFieldRequest,
+//      PluginFieldCandidate, PluginFieldResult and IPluginHookScanner::
+//      ResolveField, which gives a plugin the offset of a game-class member on
+//      the running build. Added PluginSdkGlobals and IPluginEngineEvents::
+//      GetSdkGlobals, the Game-SDK globals as the loader found them.
+//      PluginScanCandidate and PluginFieldCandidate are passed in arrays with
+//      no stride, so their size is frozen (static_assert below); a later
+//      version that needs more adds a new struct. Every struct this version
+//      appends to has its v70 member offsets pinned by static_assert.
+//
 #define PLUGIN_INTERFACE_VERSION_MIN 70
 #define PLUGIN_INTERFACE_VERSION_MAX 71
 #define PLUGIN_INTERFACE_VERSION 71
@@ -852,6 +867,31 @@ enum PluginScanFlags
     PLUGIN_SCAN_FLAG_FOLLOW_REL32 = 1 << 1,
 };
 
+// v71. One locator for a hookName, verified on one game build. A plugin hands
+// the loader every locator it knows through PluginScanRequest::candidates, and
+// the loader picks the one for the build that is running: the row for the
+// running changelist, else only an address every candidate agrees on.
+//
+// Passed in an array with no stride field, so this struct can never grow.
+struct PluginScanCandidate
+{
+    uint32_t    gameCL;         // the changelist this locator was verified on
+    uint32_t    imageStamp;     // that exe's PE TimeDateStamp; 0 = unknown
+    uint32_t    imageSize;      // that exe's SizeOfImage
+
+    // IDA-style AOB, as PluginScanRequest::pattern. null = an address-only row,
+    // used only when gameCL, imageStamp and imageSize all match the running exe.
+    const char* pattern;
+
+    uint32_t    flags;          // PLUGIN_SCAN_FLAG_FOLLOW_REL32 only
+    int32_t     resultOffset;   // as PluginScanRequest::resultOffset
+    int32_t     followRel32At;  // as PluginScanRequest::followRel32At
+
+    // The final address minus the image base, as found on that exe; 0 = none.
+    // On that exact exe the resolve must land here, or it fails.
+    uint32_t    rva;
+};
+
 // Passed by pointer to IPluginHookScanner::Resolve.
 //
 // structSize must be sizeof(PluginScanRequest) as your plugin sees it. The
@@ -892,11 +932,116 @@ struct PluginScanRequest
     // PLUGIN_SCAN_VTABLE only: how many leading slots must point at functions.
     // 0 means 1.
     uint32_t    vtableSlots;
+
+    // --- v71 ---
+    // Locators for this hookName on other game builds; null = none, which is
+    // the v70 behaviour. pattern, kind and the rest above stay the request:
+    // they are what the plugin was built against, and the kind check applies
+    // whichever locator is picked. Main module only.
+    const PluginScanCandidate* candidates;
+    uint32_t                   candidateCount;
 };
 
 #define PLUGIN_SCAN_REQUEST_INIT { (uint32_t)sizeof(PluginScanRequest), \
                                    nullptr, nullptr, PLUGIN_SCAN_UNSPECIFIED, \
-                                   PLUGIN_SCAN_FLAG_NONE, 0, -1, nullptr, 0 }
+                                   PLUGIN_SCAN_FLAG_NONE, 0, -1, nullptr, 0, \
+                                   nullptr, 0 }
+
+static_assert(sizeof(void*) == 8, "The plugin interface is x64 only");
+static_assert(sizeof(PluginScanCandidate) == 40, "PluginScanCandidate is frozen: arrays of it have no stride");
+static_assert(offsetof(PluginScanRequest, structSize)     ==  0, "v70 layout");
+static_assert(offsetof(PluginScanRequest, hookName)       ==  8, "v70 layout");
+static_assert(offsetof(PluginScanRequest, pattern)        == 16, "v70 layout");
+static_assert(offsetof(PluginScanRequest, kind)           == 24, "v70 layout");
+static_assert(offsetof(PluginScanRequest, flags)          == 28, "v70 layout");
+static_assert(offsetof(PluginScanRequest, resultOffset)   == 32, "v70 layout");
+static_assert(offsetof(PluginScanRequest, followRel32At)  == 36, "v70 layout");
+static_assert(offsetof(PluginScanRequest, module)         == 40, "v70 layout");
+static_assert(offsetof(PluginScanRequest, vtableSlots)    == 48, "v70 layout");
+static_assert(offsetof(PluginScanRequest, candidates)     == 56, "v71 starts where v70 ended");
+
+// ---------------------------------------------------------------------------
+// Game-class fields (v71) -- IPluginHookScanner::ResolveField
+//
+// A plugin that reads or writes a member of a game class names it here instead
+// of trusting the offset it was compiled with, so a game update that moves the
+// member does not turn the plugin's read into a read of something else.
+//
+//   reflected (no flag)     the offset comes from the running game's own
+//                           reflection data, found by class and member name,
+//                           so it is right on any build. The size must equal
+//                           the request's.
+//   PLUGIN_FIELD_NATIVE     a member reflection does not describe. The offset
+//                           comes from the candidate row for the running
+//                           changelist, or builtOffset on builtCL. On any other
+//                           build it fails.
+//   PLUGIN_FIELD_CHECK      something the plugin keeps using at its compiled
+//                           offset or size (a struct copied by value, an array
+//                           stride). Fails unless the running build matches it.
+//   PLUGIN_FIELD_BITFIELD   a bool bitfield: the result is its byte offset and
+//                           boolMask. Combines with NATIVE or CHECK.
+//
+// member null asks for the size of className itself (with CHECK: that it is
+// still `size`).
+// ---------------------------------------------------------------------------
+enum PluginFieldFlags
+{
+    PLUGIN_FIELD_FLAG_NONE = 0,
+    PLUGIN_FIELD_NATIVE    = 1 << 0,
+    PLUGIN_FIELD_CHECK     = 1 << 1,
+    PLUGIN_FIELD_BITFIELD  = 1 << 2,
+};
+
+// One build's value for a field. Passed in an array with no stride field, so
+// this struct can never grow.
+struct PluginFieldCandidate
+{
+    uint32_t    gameCL;     // the changelist this row was verified on
+    int32_t     offset;     // byte offset of the member in its class
+    uint32_t    size;
+    uint8_t     boolMask;   // bitfields only; 0 otherwise
+    const char* member;     // the member's name on that build if it was renamed, else null
+};
+
+// Passed by pointer to IPluginHookScanner::ResolveField. structSize works as in
+// PluginScanRequest; use PLUGIN_FIELD_REQUEST_INIT.
+struct PluginFieldRequest
+{
+    uint32_t    structSize;
+
+    // What the log and the failure window show, as hookName does for a scan.
+    // By convention "Class::Member".
+    const char* key;
+
+    // The owning class or struct, by its short name ("ACrCharacterPlayerBase",
+    // "FCrPackageTransportConnectionData"), or "/Script/<Module>.<Name>" when
+    // the short name is not unique.
+    const char* className;
+    const char* member;         // null = the size of className itself
+
+    uint32_t    flags;          // PluginFieldFlags
+    uint32_t    size;           // sizeof the member as the plugin was compiled
+    uint32_t    builtCL;        // the changelist the plugin's SDK was generated for
+    int32_t     builtOffset;    // offsetof as compiled; -1 for a bitfield (its builtCL row holds it)
+
+    const PluginFieldCandidate* candidates;
+    uint32_t                    candidateCount;
+};
+
+#define PLUGIN_FIELD_REQUEST_INIT { (uint32_t)sizeof(PluginFieldRequest), \
+                                    nullptr, nullptr, nullptr, PLUGIN_FIELD_FLAG_NONE, \
+                                    0, 0, -1, nullptr, 0 }
+
+// What ResolveField answers. Written only on success.
+struct PluginFieldResult
+{
+    int32_t     offset;
+    uint32_t    size;
+    uint8_t     boolMask;       // bitfields only; 0 otherwise
+};
+
+static_assert(sizeof(PluginFieldCandidate) == 24, "PluginFieldCandidate is frozen: arrays of it have no stride");
+static_assert(sizeof(PluginFieldResult) == 12, "PluginFieldResult has no structSize, so it is frozen");
 
 // ---------------------------------------------------------------------------
 // IPluginHookScanner -- pattern scanning, and the ONLY place a plugin gets it.
@@ -1008,7 +1153,31 @@ struct IPluginHookScanner
 	//   * the FINAL address (after followRel32At and resultOffset) must be what
 	//     `kind` says it is.
 	uintptr_t (*Resolve)(const IPluginSelf* self, const PluginScanRequest* request);
+
+	// --- v71 ---
+
+	// The offset of one game-class member on the running build (see
+	// PluginFieldRequest). True and *result written on success; false on any
+	// failure, which is recorded against the plugin like a missed pattern.
+	bool (*ResolveField)(const IPluginSelf* self, const PluginFieldRequest* request, PluginFieldResult* result);
 };
+
+static_assert(offsetof(IPluginHookScanner, ResolveRequired)                ==   0, "v70 layout");
+static_assert(offsetof(IPluginHookScanner, ResolveOptional)                ==   8, "v70 layout");
+static_assert(offsetof(IPluginHookScanner, ResolveRequiredInModule)        ==  16, "v70 layout");
+static_assert(offsetof(IPluginHookScanner, ResolveOptionalInModule)        ==  24, "v70 layout");
+static_assert(offsetof(IPluginHookScanner, ResolveRequiredUnique)          ==  32, "v70 layout");
+static_assert(offsetof(IPluginHookScanner, ResolveOptionalUnique)          ==  40, "v70 layout");
+static_assert(offsetof(IPluginHookScanner, FindAllPatternsInMainModule)    ==  48, "v70 layout");
+static_assert(offsetof(IPluginHookScanner, FindAllPatternsInModule)        ==  56, "v70 layout");
+static_assert(offsetof(IPluginHookScanner, FindXrefsToAddress)             ==  64, "v70 layout");
+static_assert(offsetof(IPluginHookScanner, FindXrefsToAddressInModule)     ==  72, "v70 layout");
+static_assert(offsetof(IPluginHookScanner, FindXrefsToAddressInMainModule) ==  80, "v70 layout");
+static_assert(offsetof(IPluginHookScanner, ReportFailure)                  ==  88, "v70 layout");
+static_assert(offsetof(IPluginHookScanner, ReportWarning)                  ==  96, "v70 layout");
+static_assert(offsetof(IPluginHookScanner, HasFailures)                    == 104, "v70 layout");
+static_assert(offsetof(IPluginHookScanner, Resolve)                        == 112, "v70 layout");
+static_assert(offsetof(IPluginHookScanner, ResolveField)                   == 120, "v71 starts where v70 ended");
 
 typedef void* HookHandle;
 namespace SDK { class UWorld; class UTexture2D; }
@@ -1087,6 +1256,27 @@ struct IPluginMemoryUtils
 	bool  (*IsAllocatorAvailable)();
 };
 
+// v71. The four globals the Game-SDK carries as fixed offsets (Offsets:: in
+// its Basic.hpp), which are right only for the build the SDK was generated
+// for. Absolute addresses; 0 = that one did not resolve. Each plugin compiles
+// its own copy of the SDK, so the loader handing its copy these values does
+// not reach the plugin's: a plugin that walks GObjects or reads FNames calls
+// its SDK's own InitManually with them.
+//
+//   gobjects      the engine's object array      (UObject::GObjects)
+//   gnames        the engine's name pool         (FName name storage)
+//   appendString  FName::AppendString            (FName::AppendString)
+//   gworld        the engine's GWorld variable   (not the SDK's Offsets::GWorld,
+//                                                 which is a different global)
+struct PluginSdkGlobals
+{
+    uint32_t    structSize;     // sizeof(PluginSdkGlobals) as the loader sees it
+    uintptr_t   gobjects;
+    uintptr_t   gnames;
+    uintptr_t   appendString;
+    uintptr_t   gworld;
+};
+
 struct IPluginEngineEvents
 {
 	void      (*RegisterOnInit)(PluginEngineInitCallback);
@@ -1120,7 +1310,32 @@ struct IPluginEngineEvents
 	uintptr_t (*GetPackageFullyLoadAddress)();
 	uintptr_t (*GetLoadPackageAddress)();
 	uintptr_t (*GetAssetDataFastGetAssetAddress)();
+
+	// --- v71 ---
+	// The Game-SDK globals as the loader found them on the running build (see
+	// PluginSdkGlobals). Null when the loader has none to give: a server build,
+	// or a loader that did not resolve them. Valid for the life of the process.
+	const PluginSdkGlobals* (*GetSdkGlobals)();
 };
+
+static_assert(offsetof(IPluginEngineEvents, RegisterOnInit)                       ==   0, "v70 layout");
+static_assert(offsetof(IPluginEngineEvents, UnregisterOnInit)                     ==   8, "v70 layout");
+static_assert(offsetof(IPluginEngineEvents, RegisterOnShutdown)                   ==  16, "v70 layout");
+static_assert(offsetof(IPluginEngineEvents, UnregisterOnShutdown)                 ==  24, "v70 layout");
+static_assert(offsetof(IPluginEngineEvents, RegisterOnTick)                       ==  32, "v70 layout");
+static_assert(offsetof(IPluginEngineEvents, UnregisterOnTick)                     ==  40, "v70 layout");
+static_assert(offsetof(IPluginEngineEvents, GetStaticLoadObjectAddress)           ==  48, "v70 layout");
+static_assert(offsetof(IPluginEngineEvents, PostToGameThread)                     ==  56, "v70 layout");
+static_assert(offsetof(IPluginEngineEvents, GetStaticFindObjectByPathAddress)     ==  64, "v70 layout");
+static_assert(offsetof(IPluginEngineEvents, GetStaticFindObjectByNameAddress)     ==  72, "v70 layout");
+static_assert(offsetof(IPluginEngineEvents, GetStaticFindObjectSafeByPathAddress) ==  80, "v70 layout");
+static_assert(offsetof(IPluginEngineEvents, GetStaticFindObjectSafeByNameAddress) ==  88, "v70 layout");
+static_assert(offsetof(IPluginEngineEvents, GetStaticFindObjectFastAddress)       ==  96, "v70 layout");
+static_assert(offsetof(IPluginEngineEvents, GetFindPackageAddress)                == 104, "v70 layout");
+static_assert(offsetof(IPluginEngineEvents, GetPackageFullyLoadAddress)           == 112, "v70 layout");
+static_assert(offsetof(IPluginEngineEvents, GetLoadPackageAddress)                == 120, "v70 layout");
+static_assert(offsetof(IPluginEngineEvents, GetAssetDataFastGetAssetAddress)      == 128, "v70 layout");
+static_assert(offsetof(IPluginEngineEvents, GetSdkGlobals)                        == 136, "v71 starts where v70 ended");
 
 struct IPluginWorldEvents
 {
@@ -1710,6 +1925,8 @@ struct IModLoaderImGui
 	bool (*IsKeyPressed)(int vk, bool repeat);
 };
 
+static_assert(offsetof(IModLoaderImGui, IsKeyPressed) == 2024, "v71 starts where v70 ended");
+
 typedef void (*PluginImGuiRenderCallback)(IModLoaderImGui* imgui);
 
 // ---------------------------------------------------------------------------
@@ -1932,6 +2149,8 @@ struct IPluginUIEvents
 	// frozen. Safe from any thread.
 	bool (*IsOverlayOpen)();
 };
+
+static_assert(offsetof(IPluginUIEvents, IsOverlayOpen) == 120, "v71 starts where v70 ended");
 
 // ---------------------------------------------------------------------------
 // In-world debug drawing (v50, client only) -- hooks->HUD->DebugDraw
@@ -2794,6 +3013,8 @@ struct IPluginGameMenu
 	// Always false when the pause hook did not install.
 	bool (*IsPauseMenuOpen)();
 };
+
+static_assert(offsetof(IPluginGameMenu, IsPauseMenuOpen) == 32, "v71 starts where v70 ended");
 
 // ---------------------------------------------------------------------------
 // Pak mounting and asset loading (v67) -- all builds
