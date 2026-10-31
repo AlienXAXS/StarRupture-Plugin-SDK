@@ -77,7 +77,7 @@ The `ExamplePlugin/` files demonstrate the full pattern.
 
 ## Keeping a UObject across ticks
 
-A raw `UObject*` held past the tick that fetched it can dangle: the object may be garbage collected and its memory handed to a new object, and a write through the old pointer corrupts whatever lives there now. `include/object_ref.h` is a header-only `ObjectRef<T>` for this. It records the object's `GObjects` slot and class next to the pointer, and `Get()` returns the pointer only while the slot still holds that object, of that class, not marked destroyed or garbage. It needs no loader support, so it works with any loader version.
+A raw `UObject*` held past the tick that fetched it can dangle: the object may be garbage collected and its memory handed to a new object, and a write through the old pointer corrupts whatever lives there now. `include/object_ref.h` is a header-only `ObjectRef<T>` for this. It records the object's `GObjects` slot and class next to the pointer, and `Get()` returns the pointer only while the slot still holds that object, of that class, not marked destroyed or garbage. (If a new object of the same class later takes the same address and slot, `Get()` returns it: it is live and safe to use, but it is not the one you recorded.) It needs no loader support, so it works with any loader version.
 
 ```cpp
 #include <object_ref.h>

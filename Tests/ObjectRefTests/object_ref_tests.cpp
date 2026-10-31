@@ -79,6 +79,14 @@ int main()
 		a.Class = &g_classB;
 		Check(ref.Get() == nullptr, "same slot and address, class changed: null");
 		a.Class = &g_classA;
+
+		// Known limit: a new object of the same class built at the same address
+		// and slot (here, the old one dying and being rebuilt in place) is
+		// indistinguishable from the recorded one. It is live and typed right.
+		a.Flags = EObjectFlags::BeginDestroyed;
+		Check(ref.Get() == nullptr, "dying: null");
+		a.Flags = EObjectFlags::NoFlags;
+		Check(ref.Get() == &a, "rebuilt in place with the same class and slot: returned");
 	}
 
 	printf("dead flags\n");

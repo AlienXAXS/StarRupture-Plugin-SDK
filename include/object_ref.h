@@ -13,7 +13,10 @@
 // ObjectRef keeps the object's GObjects slot and class next to the pointer.
 // Get() hands the pointer back only while that slot still holds the same
 // object, of the same class, that has not been marked as garbage or started
-// destroying. The slot table's chunks are never freed, so reading the slot is
+// destroying. If a new object of the same class is later created at the same
+// address and takes the same slot, Get() returns it: it is a live object of
+// the right type, so it is safe to use, but it is not the one that was
+// recorded. The slot table's chunks are never freed, so reading the slot is
 // safe even after the object is gone, and the object itself is only touched
 // once the slot says it is still there.
 //
@@ -23,8 +26,8 @@
 // the engine only assigns one to an object the first time something takes a
 // real weak pointer to it; most components never get one.
 //
-// Game thread only. The engine frees these objects on the game thread, so a
-// Get() there can't race the free.
+// Game thread only. Get() on the game thread is meant not to race a free, so
+// call it there.
 template<typename T>
 class ObjectRef
 {
