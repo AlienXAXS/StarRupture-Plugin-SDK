@@ -212,6 +212,20 @@ char    name[64];
 self->config->ReadString(self, "General", "PlayerName", name, sizeof(name), "Alice");
 ```
 
+Two more types (interface v71) change how the loader's Config tab draws an entry:
+
+```cpp
+    // A dropdown. The description comes first, then each choice after a '|'.
+    { "Map", "Style",   ConfigValueType::Choice, "Dark", "Map colours|Dark|Light|Satellite" },
+    // No field on the page: the plugin writes it when the player drags the window.
+    { "Map", "WindowX", ConfigValueType::Hidden, "-1",   "Window position; -1 centres it"   },
+```
+
+- **Choice** stores the choice as written. The page matches a stored value ignoring case and shows one that is none of the choices as the default, so read it the same way.
+- **Hidden** is state the plugin saves by itself. Each section holding any ends with a **Saved state** row whose **Clear** button sets them back to their defaults, calling the plugin's config-change callback for each value it changes. Listen for those keys if the plugin keeps the values in memory.
+
+A v70 loader refuses a v71 plugin, so a plugin using them never meets a loader that does not know them.
+
 ---
 
 ## Plugin Lifecycle

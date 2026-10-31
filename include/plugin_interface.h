@@ -678,9 +678,9 @@
 //      reusable a frame or two later.
 //
 // v71 (2026-10-30): Read-only UI state, so a plugin can tell what is on
-//      screen without detecting it itself. Every addition is appended at the
-//      BOTTOM of its struct, so nothing a v70 plugin reads by offset moved and
-//      MIN stays at 70.
+//      screen without detecting it itself, and two new config entry types.
+//      Every addition is appended at the BOTTOM of its struct or enum, so
+//      nothing a v70 plugin reads by offset moved and MIN stays at 70.
 //
 //      Added IPluginGameMenu::IsPauseMenuOpen (the game's Escape menu is
 //      active) and IPluginUIEvents::IsOverlayOpen (a loader or plugin
@@ -699,12 +699,19 @@
 //      The keyboard stays with the game. Nothing changes under exclusive
 //      capture.
 //
+//      Added ConfigValueType::Choice (a dropdown on the config page) and
+//      ConfigValueType::Hidden (a value the plugin saves by itself, which the
+//      page offers to clear instead of drawing a field for). See ConfigEntry.
+//      ConfigEntry itself is unchanged: a Choice carries its choices in
+//      description, so the loader reads a v70 plugin's entry array exactly as
+//      before, and a v70 plugin cannot hand it either new value.
+//
 #define PLUGIN_INTERFACE_VERSION_MIN 70
 #define PLUGIN_INTERFACE_VERSION_MAX 71
 #define PLUGIN_INTERFACE_VERSION 71
 
 enum class PluginLogLevel { Trace = 0, Debug = 1, Info = 2, Warn = 3, Error = 4 };
-enum class ConfigValueType { String, Integer, Float, Boolean, Keybind };
+enum class ConfigValueType { String, Integer, Float, Boolean, Keybind, Choice /* v71 */, Hidden /* v71 */ };
 
 // Network mode — mirrors the engine's ENetMode enum, letting plugins compare
 // against nicely-typed names instead of raw integers when querying GetNetMode().
@@ -721,6 +728,22 @@ enum class EPluginNetMode : uint8_t
     Unknown         = 255
 };
 
+// One setting in a plugin's config schema. The loader reads the entry array
+// with this exact layout, so it is frozen: never reorder or extend it.
+//
+// Choice (v71): one of a fixed set of strings, drawn on the config page as a
+//   dropdown. description holds the description, then each choice after a '|':
+//     "Planner the button opens|StarRupture Planner|starrupturecalc.com|Custom"
+//   The INI stores the choice as written. A stored value is matched ignoring
+//   case, and one that matches no choice is shown as defaultValue, so read it
+//   the same way. defaultValue should be one of the choices.
+//
+// Hidden (v71): a value the plugin saves by itself, such as where a window
+//   was dragged. The config page draws no field for it. Instead, a section
+//   holding Hidden entries ends with one Clear button that sets all of them
+//   back to defaultValue, firing OnConfigChanged for each one it changes. The
+//   INI stores the text as written; read and write it with whichever
+//   Read*/Write* suits the value.
 struct ConfigEntry
 {
 	const char* section;
