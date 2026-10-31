@@ -1581,14 +1581,16 @@ struct IPluginInputEvents
 	// exactly those held ("Shift+K" is false while Ctrl is down as well), a
 	// name without any ignores them. So do text fields: a key pressed while
 	// one has focus (chat, a save name, an overlay input box) reads as not
-	// held until it is released, Escape and mouse buttons excepted, and a key
-	// already held when the field took focus stays held. The loader watches a
-	// key for this from the first call that names it. Other plugins' binds do
-	// not change the answer, and mouse buttons are the logical ones, as the
-	// callbacks see them. False while the game window does not have focus,
-	// and while there is no game window to check: before the overlay's first
-	// frame, or all session with the overlay off. Any thread; allocates
-	// nothing.
+	// held until it is released, and a key already held when the field took
+	// focus stays held. Escape, mouse buttons and the keys the loader's own
+	// windows exempt are never held back, and with [Input]
+	// SuppressKeybindsWhileTyping=0 nothing is. The loader sees such a press
+	// once a call has named the key, or a plugin has bound it; apart from
+	// that, other plugins' binds do not change the answer. Mouse buttons are
+	// the logical ones, as the callbacks see them. False while the game
+	// window does not have focus, and while there is no game window to
+	// check: before the overlay's first frame, or all session with the
+	// overlay off. Any thread; allocates nothing.
 	bool (*IsKeyHeld)(const char* keyName);
 };
 
