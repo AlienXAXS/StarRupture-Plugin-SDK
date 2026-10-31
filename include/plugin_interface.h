@@ -744,6 +744,8 @@
 //      IsKeyHeld; IPluginEngineEvents::IsGameThread. The loader reads the
 //      PluginInfo tail only from a plugin that declares interface 72 or
 //      later, because a v70 or v71 PluginInfo ends where the tail starts.
+//      A test DLL built against an earlier draft of v72 has no tail, so the
+//      loader reads past its PluginInfo: rebuild it.
 //
 #define PLUGIN_INTERFACE_VERSION_MIN 70
 #define PLUGIN_INTERFACE_VERSION_MAX 72
@@ -894,7 +896,7 @@ enum PluginScanFlags
     // name for the other kinds. The loader answers from its map for the
     // running build first; pattern (and candidates) are the plugin's own
     // fallback and may be null. A key the map does not hold falls back to
-    // them, and with no pattern is a recorded failure.
+    // them, and with neither a pattern nor candidates is a recorded failure.
     PLUGIN_SCAN_FLAG_MAP_KEY = 1 << 2,
 };
 
