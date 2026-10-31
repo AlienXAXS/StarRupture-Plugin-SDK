@@ -1573,13 +1573,17 @@ struct IPluginInputEvents
 	void (*UnregisterMouseWheel)(PluginMouseWheelCallback callback, void* userData);
 
 	// --- v72 ---
-	// True while every key of `keyName` is held: a name as RegisterKeybindByName
-	// takes it ("F5", "Shift+K"), with the same modifier rule as its callbacks.
-	// A name with modifiers needs exactly those held ("Shift+K" reads false
-	// while Ctrl is down as well); a name without any ignores them. False
-	// while the game window does not have focus, before the game window
-	// exists (the overlay's first frame), and for a name the keybind table
-	// does not know. Any thread; allocates nothing.
+	// True while `keyName` is held: one key, optionally with Ctrl, Shift and
+	// Alt, read as RegisterKeybindByName reads it ("F5", "Shift+K"). Like it,
+	// a token the keybind table does not know is skipped and a later key
+	// replaces an earlier one, so "Ctlr+K" reads as K; false when no known
+	// key is left. Modifiers follow its callbacks' rule: a name with any needs
+	// exactly those held ("Shift+K" is false while Ctrl is down as well), a
+	// name without any ignores them. Other plugins' binds do not change the
+	// answer, and mouse buttons are the logical ones, as the callbacks see
+	// them. False while the game window does not have focus, and while there
+	// is no game window to check: before the overlay's first frame, or all
+	// session with the overlay off. Any thread; allocates nothing.
 	bool (*IsKeyHeld)(const char* keyName);
 };
 
