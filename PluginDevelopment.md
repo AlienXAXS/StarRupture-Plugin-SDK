@@ -616,9 +616,10 @@ The loader picks the address in this order:
 
 1. **The row for the running changelist** (the `CL-<n>` at the end of the game's version string).
    On the very exe that row was verified on (same `imageStamp` and `imageSize`), it must land on its
-   `rva`; a different answer fails the resolve and nothing else is tried. A row with a null
-   `pattern` is an address only, and counts only on that exe. A row whose pattern is not in the exe
-   at all is skipped with a warning.
+   `rva`; a different answer, or a pattern not found there, fails the resolve and nothing else is
+   tried. A row with a null `pattern` is an address only, and counts only on that exe; it must
+   carry `imageStamp`, `imageSize` and `rva`, or the resolve fails. On another exe of the same
+   changelist, a row whose pattern is not found is skipped with a warning.
 2. **Agreement.** Otherwise every other locator is tried, your own `pattern` included. At least one
    must resolve, and every one that resolves must give the same address. Two different addresses
    fail the resolve, and the failure lists what each locator found.
