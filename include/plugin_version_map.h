@@ -14,7 +14,9 @@
 //   PluginVersionMap::Attach(req);                     // this key's rows, if any
 //   scanner->Resolve(self, &req);
 //   PluginVersionMap::ResolveFields(scanner, self, g_craftComponent, g_isOn);
-// In PluginInit, before anything walks objects or reads names:
+// In PluginInit, as its first statement, before any early return (off the
+// SDK's build the loader refuses a plugin whose PluginInit did not take the
+// globals, a disabled one included):
 //   PluginSdkRuntime::Init(self->hooks);
 // and PluginSdkRuntime::GetWorld() in place of SDK::UWorld::GetWorld().
 
