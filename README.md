@@ -8,6 +8,7 @@ Everything you need to build plugins for the [StarRupture ModLoader](https://git
 |---|---|
 | `include/plugin_interface.h` | The full plugin API — interfaces, callbacks, enums |
 | `include/plugin_network_helpers.h` | Typed helpers for sending and receiving network packets |
+| `include/object_ref.h` | `ObjectRef<T>`: a UObject reference that is safe to keep past the tick it was read on |
 | `ExamplePlugin/` | Minimal starter plugin — copy, rename, and go |
 | `StarRupture SDK/` | Dumper-7 generated UE5 SDK headers (Client + Server + Generic) |
 | `Shared.props` | MSBuild properties for SDK paths and build configs |
@@ -73,6 +74,22 @@ which receives its own `IPluginHookScanner` and is the only place a plugin can s
 [PluginDevelopment.md](PluginDevelopment.md#pattern-scanning----onpluginloadhooks--ipluginhookscanner).
 
 The `ExamplePlugin/` files demonstrate the full pattern.
+
+## Keeping a UObject across ticks
+
+A raw `UObject*` held past the tick that fetched it can dangle: the object may be garbage collected and its memory handed to a new object, and a write through the old pointer corrupts whatever lives there now. `include/object_ref.h` is a header-only `ObjectRef<T>` for this. It records the object's `GObjects` slot and class next to the pointer, and `Get()` returns the pointer only while the slot still holds that object, of that class, not marked destroyed or garbage. It needs no loader support, so it works with any loader version.
+
+```cpp
+#include <object_ref.h>
+
+ObjectRef<SDK::UAudioComponent> m_audio;   // member, kept across ticks
+
+m_audio.Set(component);                    // component must be live right now
+if (SDK::UAudioComponent* c = m_audio.Get())   // nullptr once it is gone or its slot reused
+    c->Stop();
+```
+
+`Reset()` clears it, and references are small, trivially copyable, and compare with `==`. Call `Get()` on the game thread (the `Tick` callback, not a render callback), since that is the thread that frees objects. It includes `Basic.hpp` and `CoreUObject_classes.hpp` from the game SDK. The tests in `Tests/ObjectRefTests/` build without the game, against stand-ins for those headers.
 
 ## Interface versioning
 
