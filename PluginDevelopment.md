@@ -673,6 +673,10 @@ if (scan->ResolveField(self, &req, &field))
   (a bitfield: its `builtCL` row), or with `member` null the class size.
 - **`PLUGIN_FIELD_BITFIELD`**: the member must be a bool; `boolMask` is filled in.
 
+`className` is the Dumper-7 name, prefix letter included (`ACrCrafter`, `FCrPackageTransportConnectionData`);
+the member name is matched exactly. Reflected fields are read on the client only: on a dedicated
+server they fail, so ask for them in your client build.
+
 A failure is recorded against your plugin like a missed pattern, so it is refused with the reason
 in the failure window. The log has one line per field:
 
