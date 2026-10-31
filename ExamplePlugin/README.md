@@ -123,11 +123,6 @@ int value = GetConfig()->ReadInt("ExamplePlugin", "Section", "Key", defaultValue
 GetConfig()->WriteString("ExamplePlugin", "Section", "Key", "value");
 ```
 
-### IPluginScanner
-```cpp
-uintptr_t address = GetScanner()->FindPatternInMainModule("48 89 5C 24 ?? 57");
-```
-
 ### IPluginHooks
 ```cpp
 HookHandle hook = GetHooks()->InstallHook(address, MyDetour, (void**)&originalFunc);
