@@ -640,7 +640,8 @@ check whether candidates are supported.
 From v72 the loader carries its own version map: rows for each game build it supports, kept up to
 date by its CI. With `PLUGIN_SCAN_FLAG_MAP_KEY`, `hookName` is a key in that map, and `pattern` and
 `candidates` become your own fallback, each of which may be null. Main module only; the dedicated
-server's map holds no rows, so there every key falls back.
+server's map holds no rows, so there a key runs on your pattern and candidates alone (the refused
+names below still apply).
 
 ```cpp
 PluginScanRequest req = PLUGIN_SCAN_REQUEST_INIT;

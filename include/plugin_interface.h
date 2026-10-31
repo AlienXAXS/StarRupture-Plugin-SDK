@@ -738,15 +738,15 @@
 //      Also in v72: PLUGIN_SCAN_FLAG_MAP_KEY (hookName names a key in the
 //      loader's own version map, a global one or this plugin's own site, and
 //      pattern and candidates become this plugin's fallback, or null); a tail
-//      on PluginInfo, gameBuiltCL and mapFlags, that says
-//      which game build the plugin's Game-SDK was generated from (filled by
-//      default from PLUGIN_GAME_BUILT_CL, so an unchanged six-member
-//      initializer still compiles and carries it); IPluginInputEvents::
-//      IsKeyHeld; IPluginEngineEvents::IsGameThread. The loader reads the
-//      PluginInfo tail only from a plugin that declares interface 72 or
-//      later, because a v70 or v71 PluginInfo ends where the tail starts.
-//      A test DLL built against an earlier draft of v72 has no tail, so the
-//      loader reads past its PluginInfo: rebuild it.
+//      on PluginInfo, gameBuiltCL and mapFlags, that says which game build the
+//      plugin's Game-SDK was generated from (filled by default from
+//      PLUGIN_GAME_BUILT_CL, so an unchanged six-member initializer still
+//      compiles and carries it); IPluginInputEvents::IsKeyHeld;
+//      IPluginEngineEvents::IsGameThread. The loader reads the PluginInfo tail
+//      only from a plugin that declares interface 72 or later, because a v70
+//      or v71 PluginInfo ends where the tail starts. A test DLL built against
+//      an earlier draft of v72 has no tail, so the loader reads past its
+//      PluginInfo: rebuild it.
 //
 #define PLUGIN_INTERFACE_VERSION_MIN 70
 #define PLUGIN_INTERFACE_VERSION_MAX 72
@@ -894,8 +894,9 @@ enum PluginScanFlags
 
     // v72. hookName is a key in the loader's version map, and pattern and
     // candidates are this plugin's own fallback, each of which may be null.
-    // Game exe only. The dedicated server's map holds no rows, so there every
-    // key falls back.
+    // Game exe only. The dedicated server's map holds no rows, so there a key
+    // runs on pattern and candidates alone; the refused names below still
+    // apply.
     //
     // For FUNCTION_START and DATA the key is global, the same for every
     // plugin: "Class::Function" or a global's name, never with a '/'. For any
