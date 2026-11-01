@@ -735,13 +735,6 @@
 //      and shows it as needing a newer mod loader, instead of letting it call
 //      past the end of a table.
 //
-//      Also in v72: IPluginHookScanner::DeclareFeature and PluginFeatureDesc.
-//      A plugin names the keys a part of it needs; a miss on one of them turns
-//      that feature off instead of refusing the plugin. The loader refuses a
-//      plugin only when it cannot load at all: an interface it does not
-//      support, no built game build, a missing core global, or a miss on a key
-//      no feature lists.
-//
 //      Also in v72: PLUGIN_SCAN_FLAG_MAP_KEY (hookName names a key in the
 //      loader's own version map, a global one or this plugin's own site, and
 //      pattern and candidates become this plugin's fallback, or null); a tail
@@ -755,9 +748,32 @@
 //      an earlier draft of v72 has no tail, so the loader reads past its
 //      PluginInfo: rebuild it.
 //
+// v73 (2026-11-01): Features. Added IPluginHookScanner::DeclareFeature and
+//      PluginFeatureDesc. A plugin names the keys a part of it needs; a miss
+//      on one of them turns that feature off instead of refusing the plugin.
+//      The loader refuses a plugin only when it cannot load at all: an
+//      interface newer than it supports, a build it was not written for, a
+//      missing core global, or a miss on a key no feature lists.
+//      DeclareFeature is appended at the BOTTOM of IPluginHookScanner, so
+//      nothing a v70-v72 plugin reads by offset moved and MIN stays at 70.
+//      It is a version of its own because v72 loaders already exist without
+//      it (their scanner table ends at ResolveField): a v72 loader refuses a
+//      v73 plugin as needing a newer mod loader.
+//
+//      The loader no longer refuses a plugin for an older interface; a v70
+//      to v72 plugin gets the slots it was built with. What an older plugin
+//      may not do is read this game build's data where its own build had it,
+//      so it is judged by the game build it was written for: v70 and v71 as
+//      CL-127004, and anything before v70 as a build before CL-127004, which
+//      no supported build is. Such a plugin is never called, which also keeps
+//      one from before the v62 break away from tables it cannot read. The
+//      plugin list says which build it needs (VersionMap.md, "Admission").
+//      MIN is the oldest interface whose plugins can run on a build this
+//      loader supports; the auto-updater skips plugin updates below it.
+//
 #define PLUGIN_INTERFACE_VERSION_MIN 70
-#define PLUGIN_INTERFACE_VERSION_MAX 72
-#define PLUGIN_INTERFACE_VERSION 72
+#define PLUGIN_INTERFACE_VERSION_MAX 73
+#define PLUGIN_INTERFACE_VERSION 73
 
 enum class PluginLogLevel { Trace = 0, Debug = 1, Info = 2, Warn = 3, Error = 4 };
 enum class ConfigValueType { String, Integer, Float, Boolean, Keybind, Choice /* v71 */, Hidden /* v71 */ };
@@ -1125,7 +1141,7 @@ static_assert(sizeof(PluginFieldCandidate) == 24, "PluginFieldCandidate is froze
 static_assert(sizeof(PluginFieldResult) == 12, "PluginFieldResult has no structSize, so it is frozen");
 
 // ---------------------------------------------------------------------------
-// Features (v72) -- IPluginHookScanner::DeclareFeature
+// Features (v73) -- IPluginHookScanner::DeclareFeature
 //
 // A feature is a part of a plugin that can be off while the rest runs. A plugin
 // declares its features, with the keys each one needs, before it resolves
@@ -1171,7 +1187,7 @@ struct PluginFeatureDesc
 //
 // A MISS REFUSES THE PLUGIN, required or optional, and one is enough:
 // PluginInit is never called, the DLL is freed, and every miss is listed in the
-// failure window. The exception (v72) is a key that a declared feature lists
+// failure window. The exception (v73) is a key that a declared feature lists
 // (DeclareFeature): its miss turns that feature off, the plugin still loads,
 // and the miss is listed in the same window.
 //
@@ -1273,6 +1289,8 @@ struct IPluginHookScanner
 	// failure, which is recorded against the plugin like a missed pattern.
 	bool (*ResolveField)(const IPluginSelf* self, const PluginFieldRequest* request, PluginFieldResult* result);
 
+	// --- v73 ---
+
 	// Declares a feature (see PluginFeatureDesc). Call it before the resolves
 	// for the keys it lists: a miss recorded before the declaration is a core
 	// miss. True when declared; false, and nothing declared, when the call is
@@ -1297,7 +1315,7 @@ static_assert(offsetof(IPluginHookScanner, ReportWarning)                  ==  9
 static_assert(offsetof(IPluginHookScanner, HasFailures)                    == 104, "v70 layout");
 static_assert(offsetof(IPluginHookScanner, Resolve)                        == 112, "v70 layout");
 static_assert(offsetof(IPluginHookScanner, ResolveField)                   == 120, "v72 starts where v71 ended");
-static_assert(offsetof(IPluginHookScanner, DeclareFeature)                 == 128, "v72 feature declaration");
+static_assert(offsetof(IPluginHookScanner, DeclareFeature)                 == 128, "v73 starts where v72 ended");
 
 typedef void* HookHandle;
 namespace SDK { class UWorld; class UTexture2D; }
@@ -3350,7 +3368,10 @@ enum PluginTarget : int
 // ---------------------------------------------------------------------------
 // v72. The game build (Perforce changelist, the CL-<n> of the exe's
 // ProductVersion) that the Game-SDK this plugin compiles was generated from.
-// Shared.props defines it from the Game-SDK's build_cl.txt; 0 = not known.
+// The Plugin SDK's PluginGameBuild.props defines it, from the plugin's
+// PluginGameBuiltCL property (its project, its Shared.props, or
+// /p:PluginGameBuiltCL=<CL> on the build) or else the Game-SDK's
+// build_cl.txt; 0 = not known. PLUGIN_MAP_MIGRATED needs it set.
 #ifndef PLUGIN_GAME_BUILT_CL
 #define PLUGIN_GAME_BUILT_CL 0u
 #endif
