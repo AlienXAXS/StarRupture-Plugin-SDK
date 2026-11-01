@@ -15,6 +15,13 @@
 // In OnPluginLoadHooks:
 //   g_beginPlay = PluginMap::Function(scanner, self, "UWorld::BeginPlay", "40 53 48 83 EC 20 ...");
 //   PluginMap::ResolveFields(scanner, self, g_craftComponent, g_crafterSize);
+// A part of the plugin that can be off while the rest runs is a feature
+// (PluginMap::Feature): declare it before the resolves it covers, and a key
+// that does not resolve turns that feature off instead of refusing the plugin.
+//   static PluginMap::Feature s_laser{ "mining-laser", "Mining laser tuning",
+//       { "ADroneLaser::Beam", "ADroneLaser::Fire" }, { "Drone.LaserScale" } };
+//   PluginMap::DeclareFeatures(scanner, self, s_laser);
+// ... later: if (s_laser.On()) { ... }
 // In PluginInit, as its first statement, before any early return (off its
 // game build the loader refuses a plugin whose PluginInit did not take the
 // globals, a disabled one included):
@@ -25,6 +32,7 @@
 #include <cstdint>
 #include <cstring>
 #include <type_traits>
+#include <vector>
 
 namespace PluginMap
 {
@@ -51,7 +59,8 @@ namespace PluginMap
     // then `pattern` (may be null). flags: PLUGIN_SCAN_FLAG_OPTIONAL, and
     // PLUGIN_SCAN_FLAG_FOLLOW_REL32 to follow the E8/E9 at followRel32At.
     // A kind other than FUNCTION_START or DATA makes `key` a site (see Site).
-    // 0 = a recorded failure, which refuses the plugin.
+    // 0 = a recorded failure, which refuses the plugin unless a declared
+    // feature lists `key` (then that feature is off).
     inline uintptr_t Function(IPluginHookScanner* scanner, const IPluginSelf* self, const char* key,
         const char* pattern, int kind = PLUGIN_SCAN_FUNCTION_START, uint32_t flags = 0,
         int32_t resultOffset = 0, int32_t followRel32At = 0)
@@ -161,7 +170,8 @@ namespace PluginMap
     // Asks the loader for one field: the map's rows for its key first, then
     // `rows`, this plugin's own (may be null). builtCL is the game build the
     // plugin's SDK was generated for. False = the loader recorded a failure
-    // (which refuses the plugin).
+    // (which refuses the plugin, unless a declared feature lists the field's
+    // key: then that feature is off).
     inline bool ResolveField(IPluginHookScanner* scanner, const IPluginSelf* self, PluginFieldSpec& field,
         const PluginFieldCandidate* rows = nullptr, uint32_t rowCount = 0, uint32_t builtCL = PLUGIN_GAME_BUILT_CL)
     {
@@ -191,6 +201,55 @@ namespace PluginMap
         static_assert((std::is_base_of_v<PluginFieldSpec, Fields> && ...), "ResolveFields takes PluginField, PluginBitField and SR_SIZE_CHECK rows");
         bool all = true;
         ((all = ResolveField(scanner, self, fields) && all), ...);
+        return all;
+    }
+}
+
+// A part of a plugin that can be off while the rest runs. `keys` are the names
+// the feature needs, as the plugin passes them to the loader: a Function,
+// Global or Site key (the hookName, without any "<plugin>/"), or a field's
+// "Class::Member". `configKeys` are the "Section.Key" config entries it drives
+// ("Section.*" for a whole section), which the config page greys out while the
+// feature is off. A key listed by more than one feature turns off all of them.
+struct PluginMapFeature
+{
+    const char*              id;          // unique within the plugin
+    const char*              title;       // what a player reads
+    std::vector<const char*> keys;
+    std::vector<const char*> configKeys;
+
+    // True until the loader reports a key of this feature unresolved. Set by
+    // DeclareFeatures, before OnPluginLoadHooks returns; read-only afterwards.
+    bool on = true;
+    bool On() const { return on; }
+};
+
+namespace PluginMap
+{
+    using Feature = PluginMapFeature;
+
+    // Declares one feature. Call before resolving the keys it lists. False = the
+    // loader did not take it (it declares nothing, so its keys stay core).
+    inline bool DeclareFeature(IPluginHookScanner* scanner, const IPluginSelf* self, Feature& feature)
+    {
+        PluginFeatureDesc desc = PLUGIN_FEATURE_DESC_INIT;
+        desc.id             = feature.id;
+        desc.title          = feature.title;
+        desc.keys           = feature.keys.data();
+        desc.keyCount       = static_cast<uint32_t>(feature.keys.size());
+        desc.configKeys     = feature.configKeys.data();
+        desc.configKeyCount = static_cast<uint32_t>(feature.configKeys.size());
+        desc.enabled        = &feature.on;
+        return scanner->DeclareFeature(self, &desc);
+    }
+
+    // Every feature; each is declared even after a failure. True when all were.
+    template <class... Features>
+    bool DeclareFeatures(IPluginHookScanner* scanner, const IPluginSelf* self, Features&... features)
+    {
+        static_assert((std::is_same_v<Features, Feature> && ...), "DeclareFeatures takes PluginMap::Feature rows");
+        bool all = true;
+        ((all = DeclareFeature(scanner, self, features) && all), ...);
         return all;
     }
 }

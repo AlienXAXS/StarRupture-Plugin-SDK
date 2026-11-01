@@ -735,6 +735,13 @@
 //      and shows it as needing a newer mod loader, instead of letting it call
 //      past the end of a table.
 //
+//      Also in v72: IPluginHookScanner::DeclareFeature and PluginFeatureDesc.
+//      A plugin names the keys a part of it needs; a miss on one of them turns
+//      that feature off instead of refusing the plugin. The loader refuses a
+//      plugin only when it cannot load at all: an interface it does not
+//      support, no built game build, a missing core global, or a miss on a key
+//      no feature lists.
+//
 //      Also in v72: PLUGIN_SCAN_FLAG_MAP_KEY (hookName names a key in the
 //      loader's own version map, a global one or this plugin's own site, and
 //      pattern and candidates become this plugin's fallback, or null); a tail
@@ -881,7 +888,8 @@ enum PluginScanFlags
     PLUGIN_SCAN_FLAG_NONE     = 0,
 
     // Labels the failure line [optional] instead of [required]. It does NOT
-    // change the verdict: a miss refuses the plugin either way. Mark what your
+    // change the verdict: a miss refuses the plugin either way, unless a declared
+    // feature lists the key (DeclareFeature). Mark what your
     // own code genuinely null-checks, so the report is readable by whoever has
     // to fix it.
     PLUGIN_SCAN_FLAG_OPTIONAL = 1 << 0,
@@ -1117,6 +1125,35 @@ static_assert(sizeof(PluginFieldCandidate) == 24, "PluginFieldCandidate is froze
 static_assert(sizeof(PluginFieldResult) == 12, "PluginFieldResult has no structSize, so it is frozen");
 
 // ---------------------------------------------------------------------------
+// Features (v72) -- IPluginHookScanner::DeclareFeature
+//
+// A feature is a part of a plugin that can be off while the rest runs. A plugin
+// declares its features, with the keys each one needs, before it resolves
+// anything. A key that does not resolve on the running build then turns off
+// the features that list it, and the plugin still loads. A key no feature
+// lists stays core: a miss on it refuses the plugin, as it always did.
+//
+// The keys are the names the plugin passes to the loader: the hookName of a
+// Resolve (for a map key, the key itself, not "<plugin>/<hookName>"), and the
+// key of a PluginFieldRequest ("Class::Member").
+// ---------------------------------------------------------------------------
+struct PluginFeatureDesc
+{
+    uint32_t           structSize;      // sizeof(PluginFeatureDesc); use PLUGIN_FEATURE_DESC_INIT
+    const char*        id;              // unique within the plugin, e.g. "mining-laser"
+    const char*        title;           // what a player reads: "Mining laser tuning"
+    const char* const* keys;            // the keys the feature needs; at least one
+    uint32_t           keyCount;
+    const char* const* configKeys;      // "Section.Key" config entries the feature drives, or "Section.*"; may be null
+    uint32_t           configKeyCount;
+    bool*              enabled;         // may be null. The loader sets *enabled = true when the feature is declared
+                                        // and false if a key misses, before OnPluginLoadHooks returns. It writes
+                                        // it nowhere else, so the plugin may read it for as long as it is loaded.
+};
+
+#define PLUGIN_FEATURE_DESC_INIT { (uint32_t)sizeof(PluginFeatureDesc),                                    nullptr, nullptr, nullptr, 0, nullptr, 0, nullptr }
+
+// ---------------------------------------------------------------------------
 // IPluginHookScanner -- pattern scanning, and the ONLY place a plugin gets it.
 //
 // A pointer to this table is handed to the optional OnPluginLoadHooks export
@@ -1134,7 +1171,9 @@ static_assert(sizeof(PluginFieldResult) == 12, "PluginFieldResult has no structS
 //
 // A MISS REFUSES THE PLUGIN, required or optional, and one is enough:
 // PluginInit is never called, the DLL is freed, and every miss is listed in the
-// failure window.
+// failure window. The exception (v72) is a key that a declared feature lists
+// (DeclareFeature): its miss turns that feature off, the plugin still loads,
+// and the miss is listed in the same window.
 //
 // SO DOES A SECOND MATCH (v68). A pattern that matches more than once has not
 // resolved to an address, it has resolved to a coin flip -- the old behaviour
@@ -1233,6 +1272,13 @@ struct IPluginHookScanner
 	// PluginFieldRequest). True and *result written on success; false on any
 	// failure, which is recorded against the plugin like a missed pattern.
 	bool (*ResolveField)(const IPluginSelf* self, const PluginFieldRequest* request, PluginFieldResult* result);
+
+	// Declares a feature (see PluginFeatureDesc). Call it before the resolves
+	// for the keys it lists: a miss recorded before the declaration is a core
+	// miss. True when declared; false, and nothing declared, when the call is
+	// outside OnPluginLoadHooks, the description is malformed, or the id was
+	// declared already. A feature that is not declared leaves its keys core.
+	bool (*DeclareFeature)(const IPluginSelf* self, const PluginFeatureDesc* desc);
 };
 
 static_assert(offsetof(IPluginHookScanner, ResolveRequired)                ==   0, "v70 layout");
@@ -1251,6 +1297,7 @@ static_assert(offsetof(IPluginHookScanner, ReportWarning)                  ==  9
 static_assert(offsetof(IPluginHookScanner, HasFailures)                    == 104, "v70 layout");
 static_assert(offsetof(IPluginHookScanner, Resolve)                        == 112, "v70 layout");
 static_assert(offsetof(IPluginHookScanner, ResolveField)                   == 120, "v72 starts where v71 ended");
+static_assert(offsetof(IPluginHookScanner, DeclareFeature)                 == 128, "v72 feature declaration");
 
 typedef void* HookHandle;
 namespace SDK { class UWorld; class UTexture2D; }
@@ -3361,7 +3408,8 @@ typedef void        (*PluginShutdownFunc)();
 // PluginInit, and the only context in which a plugin can pattern scan. Resolve
 // every AOB you depend on here; if ANY of them misses -- required or optional --
 // the loader refuses the plugin: PluginInit is never called, the DLL is freed,
-// and the miss is listed in the failure window.
+// and the miss is listed in the failure window. A key that a declared feature
+// lists (IPluginHookScanner::DeclareFeature) turns that feature off instead.
 //
 // Plugins that do not scan simply do not export it.
 //

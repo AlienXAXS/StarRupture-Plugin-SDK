@@ -238,7 +238,8 @@ Mod loader scans Plugins/ directory
     --> calls OnPluginLoadHooks(self, scanner)   -- OPTIONAL export, the only place a
                                                    plugin may pattern scan (v62+).
         -- resolve every AOB you depend on
-        -- ANY miss refuses the plugin: PluginInit is never called and the DLL is freed
+        -- a miss refuses the plugin unless its key belongs to a feature you declared
+        -- (DeclareFeature), which turns that feature off instead
         -- self->hooks is null here; install nothing yet
     --> calls PluginInit(self)   -- IPluginSelf* bundles name, version, logger, config, hooks
         -- store self pointer (stable for the plugin's lifetime)
@@ -492,7 +493,8 @@ void OnPluginLoadHooks(IPluginSelf* self, IPluginHookScanner* scan)
 }
 ```
 
-**Any miss refuses the plugin -- one is enough.** `PluginInit` is never called, the DLL is freed,
+**A miss refuses the plugin, unless the key belongs to a feature you declared** (see
+[Features](#features----declarefeature)). `PluginInit` is never called, the DLL is freed,
 and the miss is listed in the hook-failure popup (client) and by the `hookfailures` console
 command (both), with a copy-to-clipboard button so a user can hand you something actionable.
 `ResolveOptional` / `ReportWarning` change only the `[optional]` label on the report line, not the
@@ -663,7 +665,10 @@ reads none of the old rows until the map has rows for the new request.
 
 **Order.** The map's row for the running build first, then your candidates' row for it, then an
 address every locator (your pattern included) agrees on, as in
-[Locators for other game builds](#locators-for-other-game-builds). When one of your candidates has
+[Locators for other game builds](#locators-for-other-game-builds). With no map row for the
+running build, the map's row for the latest build it has one for is rescanned on this build and
+used only if its pattern resolves here, uniquely and as your request's kind; older rows are not
+read. When one of your candidates has
 an `rva` and is for this very exe, the map's pick must land on that `rva`, or the resolve fails as
 AMBIGUOUS. Rows the map holds under the key for another kind, or for another fingerprint of a site,
 are not used. A key with no rows your request can use runs on your pattern and candidates alone,
@@ -806,6 +811,7 @@ SDK::UWorld* world = PluginSdkRuntime::GetWorld();     // instead of SDK::UWorld
 | `PluginMap::FunctionAs<Fn>(...)` | The same, as a function pointer: `FunctionAs<void (*)(SDK::UWorld*)>(...)`. |
 | `PluginMap::Global<T>(scan, self, key, pattern = nullptr)` | A global by name, kind `DATA`, as a `T*`. |
 | `PluginMap::Site(scan, self, hookName, pattern, kind, ...)` | Your own site, `<PluginInfo name>/<hookName>`, kept under the request's fingerprint: it needs its own pattern. |
+| `PluginMap::Feature`, `PluginMap::DeclareFeatures(scan, self, features...)` | A part of the plugin that can be off while the rest runs (see [Features](#features----declarefeature)). `feature.On()` is false once a key of it did not resolve. |
 | `PluginMap::Request(key, pattern, kind, ...)` | The request the helpers send, not sent, for adding `candidates` before you call `Resolve` yourself. |
 | `SR_FIELD(T, Class, Member, flags)` | A `PluginField<T>`: `In(object)` gives the member or null. `flags` takes `PLUGIN_FIELD_NATIVE` and `PLUGIN_FIELD_CHECK`. |
 | `SR_BITFIELD(Class, Member)` | A `PluginBitField`: `Get(object)` and `Set(object, value)`. |
@@ -819,6 +825,30 @@ With `PLUGIN_GAME_BUILT_CL` 0 the loader does not know your build, so through `P
 a `PLUGIN_FIELD_NATIVE` member resolves only from a row for the running build, and a checked bitfield
 fails. `PluginVersionMap::ResolveFields` sends the generated header's `kBuiltCL` instead, so a native
 member's `builtOffset` still applies on that build.
+
+#### Features -- DeclareFeature
+
+`IPluginHookScanner::DeclareFeature(self, &desc)` (appended in v72; `PluginFeatureDesc` in
+`plugin_interface.h`) groups the keys one part of your plugin needs. Call it in
+`OnPluginLoadHooks`, before the resolves it covers. A key that does not resolve and belongs to a
+declared feature turns that feature off (`*desc.enabled` becomes false) and the plugin still
+loads; a key that belongs to no feature refuses the plugin as before. The loader also refuses a
+plugin for an interface mismatch, no built CL, or missing core globals. Keys are the `hookName`
+of a Function, Global or Site request, or a field's `"Class::Member"`. `configKeys` name the
+`"Section.Key"` config entries the feature drives (`"Section.*"` for a section); the loader
+reports them as off so a settings page can grey them out. A feature that is off is listed in the
+failure window and logged as `[Map] MyPlugin: feature "Mining laser" is off: ...`. Check
+`feature.On()` before installing anything that depends on it. A loader older than this call has a
+shorter table: install the loader and its plugins together.
+
+```cpp
+static PluginMap::Feature s_laser{ "laser", "Mining laser",
+    { "ADroneLaser::Beam", "ADroneLaser::Fire" }, { "Drone.LaserScale" } };
+
+PluginMap::DeclareFeatures(scan, self, s_laser);
+g_beam = PluginMap::Function(scan, self, "ADroneLaser::Beam", "48 89 5C 24 ?? 57");
+// ... in PluginInit:  if (s_laser.On()) InstallLaserHooks();
+```
 
 **`PluginInfo` (v72).** Two members follow `pluginTarget`. The six-member initializer above still
 compiles, and fills them with `PLUGIN_GAME_BUILT_CL` and 0. Once your plugin meets the checklist
