@@ -638,7 +638,8 @@ check whether candidates are supported.
 #### Map keys (PLUGIN_SCAN_FLAG_MAP_KEY)
 
 From v72 the loader carries its own version map: rows for each game build it supports, kept up to
-date by its CI. With `PLUGIN_SCAN_FLAG_MAP_KEY`, `hookName` is a key in that map, and `pattern` and
+date by its CI. What the map holds, how the loader picks a row and how the map reaches players is in
+[VersionMap.md](https://github.com/AlienXAXS/StarRupture-ModLoader/blob/main/VersionMap.md). With `PLUGIN_SCAN_FLAG_MAP_KEY`, `hookName` is a key in that map, and `pattern` and
 `candidates` become your own fallback, each of which may be null. Main module only; the dedicated
 server's map holds no rows, so there a key runs on your pattern and candidates alone (the refused
 names below still apply).
@@ -853,13 +854,10 @@ static PluginInfo s_pluginInfo = {
    row in `OnPluginLoadHooks`.
 
 **What the loader does with the flag.** It judges a plugin against the game build the plugin was
-compiled for (`PLUGIN_GAME_BUILT_CL`), not the loader's. On that build the plugin loads as ever.
-On any other build the loader lists, the plugin runs only if it is interface v72 or later, sets
-`PLUGIN_MAP_MIGRATED` and calls `GetSdkGlobals` in `PluginInit`; otherwise it is listed as
-**Incompatible** with "Needs an update to run on CL-...", and it still loads on its own build. A
-plugin before v72 has no tail and counts as built for CL-127004, as does a v72 plugin whose
-`PLUGIN_GAME_BUILT_CL` is 0. A tail that sets `PLUGIN_MAP_MIGRATED` and names no build (0) is refused
-on every build.
+compiled for (`PLUGIN_GAME_BUILT_CL`), not the loader's. On any other build it lists, the plugin runs
+only if it is interface v72 or later, sets `PLUGIN_MAP_MIGRATED` and calls `GetSdkGlobals` in
+`PluginInit`; otherwise it is listed as **Incompatible**. The rule, with the cases for a plugin before
+v72 and for a tail that names no build, is in [Admission](https://github.com/AlienXAXS/StarRupture-ModLoader/blob/main/VersionMap.md#admission).
 
 #### The function table
 
