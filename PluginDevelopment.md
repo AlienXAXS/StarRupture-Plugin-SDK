@@ -986,6 +986,54 @@ v72 and for a tail that names no build, is in [Admission](https://github.com/Ali
 
 Patterns are IDA-style byte strings where `??` is a wildcard byte.
 
+#### Rule 3 check -- no direct reads of game members
+
+Item 3 of the migration checklist is checked by `tools/rule3-check.mjs`, a source scan. A compiled
+member offset is only right for the build it was compiled against: after a game update that
+reorders members, the read returns the wrong value and a write corrupts memory. A compiler cannot
+see this, so the tool reads the plugin's sources against the Game-SDK headers and flags:
+
+| Kind | What it flags |
+|------|---------------|
+| `member` | `->m` or `.m` where `m` is declared on a game class or struct (looked up through the base classes) |
+| `suspect` | the same on a receiver the scan could not type, when `m` is declared only on game classes |
+| `sizeof` | `sizeof`, `alignof` or `offsetof` of a game type |
+| `stride` | `TArray`, `TSet`, `TMap` or `TSparseArray` of a game struct held by value |
+| `byvalue` | a game struct held, copied or passed by value |
+| `overlay` | memory cast to a struct the plugin declares itself |
+| `offset` | pointer arithmetic with a hex constant, a hard address, or a named offset constant |
+
+`sizeof`, `stride` and `byvalue` of a struct pass when the plugin lists `SR_SIZE_CHECK(thatStruct)`,
+because the loader then checks the size on the running build. Engine classes (CoreUObject, Engine,
+UMG, GameplayAbilities, MassEntity and so on) are not flagged; every other package is the game's.
+
+Run it from the plugin's repository:
+
+    node <PluginSDK>/tools/rule3-check.mjs --plugin <Name> --sdk <Game-SDK>/Client/SDK --source <plugin dir>
+
+A plugin that imports `tools\Rule3Check.targets` from its `Shared.props` runs it before compile.
+`--mode` is `auto` (default), `enforce` or `report`: in `auto` the findings are warnings until the
+plugin defines `PLUGIN_MAP_MIGRATED`, then they fail the build. `--json <file>` writes the result.
+Output lines use the MSBuild error format. Exit codes: 0 pass, 3 findings under enforce, 2 bad usage.
+
+**Allow-list.** `tools/rule3-allow.json` lists what is not a violation. Every entry needs a
+`reason`: the tool refuses a file with an entry that has none, and warns about an exception that
+matches nothing. `enginePackages` names the Dumper-7 packages that are the engine's. `exceptions`
+are per site:
+
+    { "plugin": "BetterCheats", "file": "BetterCheats/enemies.cpp", "kind": "offset",
+      "what": "base + 0x38", "reason": "UMassEntitySubsystem::EntityManager, a MassEntity engine class" }
+
+`plugin` and `file` (a path suffix) narrow the entry, `kind` is one of the kinds above and `what`
+is a substring of the flagged text. A reviewer approves each new entry.
+
+**Fixing a finding.** Request the member by name and read it through the field:
+
+1. Add an `SR_FIELD` (or `SR_BITFIELD`) request and list it in the feature that uses it.
+2. Read it with `field.In(object)` instead of `object->Member`.
+3. For a stride or a struct held by value, list `SR_SIZE_CHECK(Struct)` in the same feature.
+4. For a member that is not reflected, add a native row to the version map.
+
 ---
 
 ### IPluginHooks -- Sub-Interfaces

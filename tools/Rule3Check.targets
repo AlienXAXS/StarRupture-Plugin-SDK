@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Rule 3 check: a plugin never reads a game-class member directly; every game value
+  goes through the loader by name. This runs tools\rule3-check.mjs before the plugin
+  compiles. A plugin opts in with one line in its Shared.props:
+
+    <Import Project="$(PluginSDKInclude)\..\tools\Rule3Check.targets" Condition="Exists('$(PluginSDKInclude)\..\tools\Rule3Check.targets')" />
+
+  Properties (all optional):
+    Rule3Check   true (default) or false; the CI build passes false and runs the tool as its own step
+    Rule3Mode    auto (default), enforce or report
+                 auto: report as warnings until the plugin sets PLUGIN_MAP_MIGRATED, then fail the build
+    Rule3Plugin  the plugin's name, default the project name
+    Rule3Source  the directory to scan, default the solution directory
+
+  Needs node on PATH and the Game-SDK dump at $(StarRuptureSDKSourceDir) (Client\SDK).
+-->
+<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <PropertyGroup>
+    <Rule3Check Condition="'$(Rule3Check)' == ''">true</Rule3Check>
+    <Rule3Mode Condition="'$(Rule3Mode)' == ''">auto</Rule3Mode>
+    <Rule3Plugin Condition="'$(Rule3Plugin)' == ''">$(MSBuildProjectName)</Rule3Plugin>
+    <Rule3Source Condition="'$(Rule3Source)' == '' And '$(SolutionDir)' != ''">$(SolutionDir.TrimEnd('\'))</Rule3Source>
+    <Rule3Source Condition="'$(Rule3Source)' == ''">$(MSBuildProjectDirectory)</Rule3Source>
+    <Rule3Tool>$(MSBuildThisFileDirectory)rule3-check.mjs</Rule3Tool>
+  </PropertyGroup>
+
+  <Target Name="Rule3Check" BeforeTargets="ClCompile" Condition="'$(Rule3Check)' == 'true' And Exists('$(StarRuptureSDKSourceDir)')">
+    <!-- The paths are trimmed of a trailing backslash: it would escape the closing quote. -->
+    <PropertyGroup>
+      <Rule3Sdk>$(StarRuptureSDKSourceDir.TrimEnd('\'))</Rule3Sdk>
+    </PropertyGroup>
+    <Exec Command="node --version" StandardOutputImportance="low" ContinueOnError="true">
+      <Output TaskParameter="ExitCode" PropertyName="Rule3NodeExit" />
+    </Exec>
+    <Warning Condition="'$(Rule3NodeExit)' != '0'" Text="RULE3 check skipped: node was not found on PATH" />
+    <Exec Condition="'$(Rule3NodeExit)' == '0'"
+          Command="node &quot;$(Rule3Tool)&quot; --plugin &quot;$(Rule3Plugin)&quot; --sdk &quot;$(Rule3Sdk)&quot; --source &quot;$(Rule3Source)&quot; --mode $(Rule3Mode)"
+          CustomErrorRegularExpression="^rule3-check: .*(usage|not found)" />
+  </Target>
+</Project>
