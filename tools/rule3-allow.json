@@ -1,0 +1,29 @@
+{
+  "gamePackages": [
+    { "pattern": "^(Au[A-Z]|Cr[A-Z]|Chimera|BP[_A-Z])", "reason": "the game's own code packages (Au*, Cr*, Chimera*, BP_*); a member name found only in these is the game's, used to catch a game read whose receiver this scan could not type" }
+  ],
+  "enginePackages": [
+    { "names": ["Basic", "CoreUObject"], "reason": "UObject header and core engine layout (Index, Flags, Class, Name, Outer, TArray/FString/FName internals), identical across games" },
+    { "names": ["Engine", "EngineSettings", "InputCore", "SlateCore", "Slate", "UMG"], "reason": "Unreal Engine runtime classes (actors, components, movement, controllers, widgets); read at their compiled engine layout on purpose, e.g. MaxWalkSpeed, Velocity" },
+    { "names": ["GameplayAbilities", "GameplayTags", "GameplayTasks"], "reason": "Gameplay Ability System types such as FGameplayAttributeData and FGameplayEffectSpec, engine code kept compiled on purpose" },
+    { "names": ["MassEntity", "MassCommon", "MassSpawner", "MassActors"], "reason": "Mass Entity framework types (FMassEntityHandle Index/SerialNumber), engine layout" },
+    { "names": ["EnhancedInput"], "reason": "Enhanced Input mappings (FEnhancedActionKeyMapping), engine layout" },
+    { "names": ["AIModule", "NavigationSystem"], "reason": "Unreal AI module (AAIController::BrainComponent), engine layout" },
+    { "names": ["CommonUI", "CommonGame", "CommonInput", "CommonUser"], "reason": "Epic's Common UI and Common Game plugins (activatable widgets, the UI policy and layouts), not the game's own code" }
+  ],
+  "exceptions": [
+    { "plugin": "BetterCheats", "file": "BetterCheats/aob_patterns.h", "kind": "offset", "what": "kHeatGateJumpOffset", "reason": "byte distance into a matched code pattern (a code-shape check), not a game member offset" },
+    { "plugin": "BetterCheats", "file": "BetterCheats/enemies.cpp", "kind": "offset", "what": "base + 0x38", "reason": "UMassEntitySubsystem::EntityManager, a MassEntity engine class, kept compiled on purpose" },
+    { "plugin": "BetterCheats", "file": "BetterCheats/machine_power.cpp", "kind": "offset", "what": "massEntitySubsystem ) + 0x38", "reason": "UMassEntitySubsystem::EntityManager, a MassEntity engine class, kept compiled on purpose" },
+    { "plugin": "BetterCheats", "file": "BetterCheats/machine_power.cpp", "kind": "offset", "what": "entityManager ) + 0x120", "reason": "FMassEntityManager::ConstSharedFragmentsContainer, a MassEntity engine class, kept compiled on purpose" },
+    { "plugin": "Compass", "file": "src/compass/compass_textures.h", "kind": "offset", "reason": "UObject flags and index, FUObjectItem and UStreamableRenderAsset/UTexture flags: core engine layout, kept compiled on purpose" },
+    { "plugin": "ProductionViewer", "file": "ProductionViewer/Plugin Core/Signatures/plugin_signatures.h", "kind": "offset", "reason": "byte distances to a call inside a matched code pattern (a code-shape check), not game member offsets" },
+    { "plugin": "ProductionViewer", "file": "ProductionViewer/Production Viewer/production_basecore.cpp", "kind": "offset", "reason": "TSharedPtr reference controller strong and weak counts: engine layout, kept compiled on purpose" },
+    { "plugin": "ProductionViewer", "file": "ProductionViewer/Production Viewer/production_mass.cpp", "kind": "offset", "what": "+ 0x38", "reason": "UMassEntitySubsystem::EntityManager, a MassEntity engine class, kept compiled on purpose" },
+    { "plugin": "RuptureTimer", "file": "src/debug/object_dumper.cpp", "kind": "offset", "what": "kOff_FProperty_Offset", "reason": "FProperty layout inside the object dumper: core engine layout, kept compiled on purpose" },
+    { "plugin": "WaveOptimiser", "file": "src/wave_optimiser_signatures.h", "kind": "offset", "what": "GetSubsystemMassEntity_CallOffset", "reason": "byte distance to a call inside a matched code pattern (a code-shape check), not a game member offset" },
+    { "plugin": "CameraControls", "file": "src/cameracontrols_fields.h", "kind": "offset", "what": "kOriginOffset", "reason": "ULocalPlayer::Origin, an Engine class member that is not a UPROPERTY, kept compiled on purpose" },
+    { "plugin": "CameraControls", "file": "src/cameracontrols_fields.h", "kind": "offset", "what": "kSizeOffset", "reason": "ULocalPlayer::Size, an Engine class member that is not a UPROPERTY, kept compiled on purpose" },
+    { "plugin": "CameraControls", "file": "src/control_probe.cpp", "kind": "offset", "what": "kBitsOffset", "reason": "APlayerController bitfield byte, an Engine class member that is not a UPROPERTY, kept compiled on purpose" }
+  ]
+}
