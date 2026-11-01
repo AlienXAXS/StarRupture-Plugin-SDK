@@ -663,12 +663,10 @@ kind, its pattern as the loader parses it, `resultOffset` and `followRel32At` (-
 they were verified with: a site key needs its own pattern, and changing the pattern or an offset
 reads none of the old rows until the map has rows for the new request.
 
-**Order.** The map's row for the running build first, then your candidates' row for it, then an
-address every locator (your pattern included) agrees on, as in
-[Locators for other game builds](#locators-for-other-game-builds). With no map row for the
-running build, the map's row for the latest build it has one for is rescanned on this build and
-used only if its pattern resolves here, uniquely and as your request's kind; older rows are not
-read. When one of your candidates has
+**Order.** The map's row for the running build, the latest build's row verified on this one, then
+your candidates and pattern, then (for a declared feature) off, else an error: see
+[Features](#features----declarefeature). Your candidates are read as in
+[Locators for other game builds](#locators-for-other-game-builds). When one of your candidates has
 an `rva` and is for this very exe, the map's pick must land on that `rva`, or the resolve fails as
 AMBIGUOUS. Rows the map holds under the key for another kind, or for another fingerprint of a site,
 are not used. A key with no rows your request can use runs on your pattern and candidates alone,
@@ -828,27 +826,67 @@ member's `builtOffset` still applies on that build.
 
 #### Features -- DeclareFeature
 
-`IPluginHookScanner::DeclareFeature(self, &desc)` (appended in v72; `PluginFeatureDesc` in
-`plugin_interface.h`) groups the keys one part of your plugin needs. Call it in
-`OnPluginLoadHooks`, before the resolves it covers. A key that does not resolve and belongs to a
-declared feature turns that feature off (`*desc.enabled` becomes false) and the plugin still
-loads; a key that belongs to no feature refuses the plugin as before. The loader also refuses a
-plugin for an interface mismatch, no built CL, or missing core globals. Keys are the `hookName`
-of a Function, Global or Site request, or a field's `"Class::Member"`. `configKeys` name the
-`"Section.Key"` config entries the feature drives (`"Section.*"` for a section); the loader
-reports them as off so a settings page can grey them out. A feature that is off is listed in the
-failure window and logged as `[Map] MyPlugin: feature "Mining laser" is off: ...`. Check
-`feature.On()` before installing anything that depends on it. A loader older than this call has a
-shorter table: install the loader and its plugins together.
+A feature is a part of your plugin that can be off while the rest runs. Without one, every key you
+resolve is core: one miss after a game update refuses the whole plugin. With one, a miss on a key
+the feature lists turns off only that feature.
+
+**Declare.** `IPluginHookScanner::DeclareFeature(self, &desc)` (appended in v72;
+`PluginFeatureDesc` in `plugin_interface.h`), or `PluginMap::DeclareFeatures` from `plugin_map.h`.
+Call it in `OnPluginLoadHooks`, before the resolves it covers; a miss before the declaration is a
+core miss.
+
+| Member | Meaning |
+|---|---|
+| `id` | Unique within the plugin. Used in the log. |
+| `title` | What a player reads. Plain English, the thing they would notice missing: "Mining laser tuning", not `ADroneLaser hooks`. |
+| `keys` | At least one: the `hookName` of a Function, Global or Site request, or a field's `"Class::Member"`. A key listed by two features turns both off. |
+| `configKeys` | The `"Section.Key"` config entries the feature drives (`"Section.*"` for a section). May be empty. |
+| `enabled` | Set true on declare, false on a miss. `PluginMap::Feature::On()` reads it. |
 
 ```cpp
-static PluginMap::Feature s_laser{ "laser", "Mining laser",
+static PluginMap::Feature s_laser{ "laser", "Mining laser tuning",
     { "ADroneLaser::Beam", "ADroneLaser::Fire" }, { "Drone.LaserScale" } };
 
 PluginMap::DeclareFeatures(scan, self, s_laser);
 g_beam = PluginMap::Function(scan, self, "ADroneLaser::Beam", "48 89 5C 24 ?? 57");
 // ... in PluginInit:  if (s_laser.On()) InstallLaserHooks();
 ```
+
+`ExamplePlugin/plugin.cpp` declares one feature the same way. Check `On()` before installing
+anything the feature depends on, and before reading its fields. Keys that belong to no feature stay
+core, so keep the list for what the plugin can do without: if the plugin is pointless without a
+key, leave it out of every feature.
+
+**Resolution order, then what a miss costs.** For a function key (fields: see
+[Game-class fields](#game-class-fields-resolvefield)):
+
+1. The loader's map row for the running changelist (CL).
+2. Otherwise the row of the latest CL the map has one for, rescanned on this build; it counts only
+   if its pattern resolves here, uniquely and as your request's kind.
+3. Otherwise your own pattern and candidates, where every locator that resolves must agree.
+4. Otherwise the key is unresolved: a declared feature turns off, and a key outside any feature
+   refuses the plugin (an error in the failure window).
+
+The loader's [Selection](https://github.com/AlienXAXS/StarRupture-ModLoader/blob/main/VersionMap.md#selection)
+has the full rules (absent rows, AMBIGUOUS, shared names).
+
+**What players see.** The plugin loads. The failure window lists each
+feature that is off by its `title`, with the key and the reason; `ModLoader.log` gets one line,
+`[Map] MyPlugin: feature "Mining laser tuning" is off: ADroneLaser::Beam (...)`. The config entries
+in `configKeys` are reported as off (`PluginHookReport::ConfigOffReason`) for the settings page to
+grey out; their stored values are kept, so the setting returns when the feature does.
+
+**When the plugin is still refused.** `PluginInit` is not called and the plugin is listed as failed
+or incompatible for:
+- an interface mismatch: a v72 plugin on a loader that only has v71 shows as needing a newer mod
+  loader, and a loader older than `DeclareFeature` has a shorter `IPluginHookScanner` table, so
+  install the loader and its plugins together;
+- no built CL: a tail that sets `PLUGIN_MAP_MIGRATED` but names no game build is refused on every
+  build, and on another build than its own a plugin must be migrated (see
+  [Admission](https://github.com/AlienXAXS/StarRupture-ModLoader/blob/main/VersionMap.md#admission));
+- the core globals missing: `GetSdkGlobals` returned none (the loader could not find GObjects,
+  `FName::AppendString` or `GWorld`), or `PluginInit` did not take them;
+- any unresolved key that is in no declared feature.
 
 **`PluginInfo` (v72).** Two members follow `pluginTarget`. The six-member initializer above still
 compiles, and fills them with `PLUGIN_GAME_BUILT_CL` and 0. Once your plugin meets the checklist
