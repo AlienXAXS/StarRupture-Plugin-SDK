@@ -1034,6 +1034,38 @@ is a substring of the flagged text. A reviewer approves each new entry.
 3. For a stride or a struct held by value, list `SR_SIZE_CHECK(Struct)` in the same feature.
 4. For a member that is not reflected, add a native row to the version map.
 
+#### Getting a value added to the shared map
+
+You do not have to wait for the loader's map to hold a value your plugin needs. Your plugin can
+carry its own row for it: `plugin_version_map.h` builds your rows from `version_map.generated.h`
+into the plugin, and the loader uses its shared row first and your plugin's row second (see
+[Selection](https://github.com/AlienXAXS/StarRupture-ModLoader/blob/main/VersionMap.md#selection)).
+That works from interface v73 on with features (a value that does not resolve turns one feature
+off, see [Features](#features----declarefeature)), and older plugins are still accepted as the
+[interface changelog](#interface-version-changelog) says.
+
+Your own rows are only as current as your last release. To have the pipeline keep a value current
+on every game build, send a PR that adds it to the shared map and to the CI key list:
+
+- **A function or global:** add its rows for the build you tested to the loader's
+  `hooks/game/version_map.generated.h`, and list your plugin among the ones the CI scans (the
+  `plugins` input of starrupture-ci's `sr-client-check.yml`), so the pipeline writes the row for
+  each new build.
+- **A member:** add its row to the same header's `kFieldRows`, and a line to starrupture-ci's
+  `ci/native-keys.txt`, so `ci/field-rows.mjs` reads it from the PDB on every build. Mark the line
+  `optional` if your plugin runs without it; a key is optional only when every plugin's line says so.
+
+A `native-keys.txt` line is `<plugin> <Class::Member>`, then optionally an offset, size and mask in
+hex, then `optional`:
+
+    MiniMap UTexture::SRGB optional
+
+The row formats and the PR steps are in the loader's
+[VersionMap.md](https://github.com/AlienXAXS/StarRupture-ModLoader/blob/main/VersionMap.md).
+Before you send it, check that the plugin sets its build with `PluginGameBuild.props`
+(`PLUGIN_GAME_BUILT_CL`), sets `PLUGIN_MAP_MIGRATED` only once the migration checklist holds, and
+passes the [rule 3 check](#rule-3-check----no-direct-reads-of-game-members).
+
 ---
 
 ### IPluginHooks -- Sub-Interfaces
