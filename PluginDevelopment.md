@@ -759,7 +759,8 @@ Two header-only layers in the SDK's `include/` fill the requests above for you:
 - **`plugin_version_map.h`** includes `plugin_map.h` and adds your own rows from
   `version_map.generated.h` (written by starrupture-ci's `ci/version-map.mjs`), for keys the
   loader's map does not hold yet. Include it after that header. It does not compile when the
-  header's `kBuiltCL` is not your Game-SDK's `PLUGIN_GAME_BUILT_CL`.
+  header's `kBuiltCL` is not your Game-SDK's `PLUGIN_GAME_BUILT_CL`, unless `PLUGIN_GAME_BUILT_CL` is 0
+  (no `build_cl.txt`), where the check passes.
 
 ```cpp
 #include "plugin_map.h"
@@ -813,8 +814,10 @@ SDK::UWorld* world = PluginSdkRuntime::GetWorld();     // instead of SDK::UWorld
 | `PluginSdkRuntime::Init(self->hooks)`, `GetWorld()`, `Globals()` | Points your copy of the SDK's `GObjects` and `FName::AppendString` at the running build's, from `GetSdkGlobals`. `GetWorld()` replaces `SDK::UWorld::GetWorld()`, which reads the compiled `Offsets::GWorld`. |
 | `PluginLazyField<T>{ "Member" }` | A Blueprint (`_C`) member, which has no SDK offset: `In(hooks->ObjectProperties, object)` looks it up by name on first use and caches the offset per class. Game thread only. |
 
-With `PLUGIN_GAME_BUILT_CL` 0 the loader does not know your build, so a `PLUGIN_FIELD_NATIVE` member
-resolves only from a row for the running build, and a checked bitfield fails.
+With `PLUGIN_GAME_BUILT_CL` 0 the loader does not know your build, so through `PluginMap::ResolveFields`
+a `PLUGIN_FIELD_NATIVE` member resolves only from a row for the running build, and a checked bitfield
+fails. `PluginVersionMap::ResolveFields` sends the generated header's `kBuiltCL` instead, so a native
+member's `builtOffset` still applies on that build.
 
 **`PluginInfo` (v72).** Two members follow `pluginTarget`. The six-member initializer above still
 compiles, and fills them with `PLUGIN_GAME_BUILT_CL` and 0. Once your plugin meets the checklist
@@ -848,6 +851,15 @@ static PluginInfo s_pluginInfo = {
    `SDK::UWorld::GetWorld()`.
 5. `PluginMap::ResolveFields` (or `PluginVersionMap::ResolveFields`) asks for every field and size
    row in `OnPluginLoadHooks`.
+
+**What the loader does with the flag.** It judges a plugin against the game build the plugin was
+compiled for (`PLUGIN_GAME_BUILT_CL`), not the loader's. On that build the plugin loads as ever.
+On any other build the loader lists, the plugin runs only if it is interface v72 or later, sets
+`PLUGIN_MAP_MIGRATED` and calls `GetSdkGlobals` in `PluginInit`; otherwise it is listed as
+**Incompatible** with "Needs an update to run on CL-...", and it still loads on its own build. A
+plugin before v72 has no tail and counts as built for CL-127004, as does a v72 plugin whose
+`PLUGIN_GAME_BUILT_CL` is 0. A tail that sets `PLUGIN_MAP_MIGRATED` and names no build (0) is refused
+on every build.
 
 #### The function table
 
