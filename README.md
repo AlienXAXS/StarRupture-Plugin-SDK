@@ -8,6 +8,8 @@ Everything you need to build plugins for the [StarRupture ModLoader](https://git
 |---|---|
 | `include/plugin_interface.h` | The full plugin API — interfaces, callbacks, enums |
 | `include/plugin_network_helpers.h` | Typed helpers for sending and receiving network packets |
+| `include/plugin_map.h` | Helpers for game functions, members and globals from the loader's version map (v72) |
+| `include/plugin_version_map.h` | `plugin_map.h` plus the plugin's own rows from a generated `version_map.generated.h` |
 | `ExamplePlugin/` | Minimal starter plugin — copy, rename, and go |
 | `StarRupture SDK/` | Dumper-7 generated UE5 SDK headers (Client + Server + Generic) |
 | `Shared.props` | MSBuild properties for SDK paths and build configs |

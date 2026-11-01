@@ -731,9 +731,12 @@ server they fail, so ask for them in your client build.
 The rows come from the loader's own version map first, when it has the request's `key` and that key
 names the same class and member (or the member one of its rows records as renamed); your
 `candidates` add any changelist the map has no row for. A candidate that disagrees with the map's
-row for the same changelist fails the request, and a key that names another member is set aside
-with a log line. So a member the map holds resolves on a new build with no row of yours. The
-dedicated server uses your candidates only and does not bound a native member.
+row for the same changelist fails the request, and a key that names another class or member is set
+aside with a log line. So a member the map holds resolves on a new build with no row of yours. The
+class is compared as written, and the map's keys carry the short name, so a request whose
+`className` is a `/Script/<Module>.<Name>` path reads your candidates only: a short name two modules
+share cannot say which of the two classes the map's rows describe. The dedicated server uses your
+candidates only and does not bound a native member.
 
 A failure is recorded against your plugin like a missed pattern, so it is refused with the reason
 in the failure window. The log has one line per field:
@@ -745,6 +748,106 @@ in the failure window. The log has one line per field:
 [Map] MyPlugin: ACrCrafter::CraftComponent: refused: the loader map's CL-128786 row says 0x6E0/0x8, the plugin's own says 0x6E8/0x8
 [Map] MyPlugin: MyClass::MyNative: refused: CL-128786 row gives 0x5C4/0x8, past the end of MyClass (0x5C8 bytes on this build)
 ```
+
+#### SDK helpers (plugin_map.h, plugin_version_map.h)
+
+Two header-only layers in the SDK's `include/` fill the requests above for you:
+
+- **`plugin_map.h`** needs no generated header. Include it after `plugin_interface.h` and the
+  Game-SDK headers. Your game build is `PLUGIN_GAME_BUILT_CL`, which `Shared.props` reads from the
+  `build_cl.txt` beside the Game-SDK's `Client\` or `Server\` folder (0 when there is none).
+- **`plugin_version_map.h`** includes `plugin_map.h` and adds your own rows from
+  `version_map.generated.h` (written by starrupture-ci's `ci/version-map.mjs`), for keys the
+  loader's map does not hold yet. Include it after that header. It does not compile when the
+  header's `kBuiltCL` is not your Game-SDK's `PLUGIN_GAME_BUILT_CL`.
+
+```cpp
+#include "plugin_map.h"
+
+static uintptr_t g_beginPlay = 0;
+static uintptr_t g_fatalCall = 0;
+static SDK::UWorld** g_gworld = nullptr;
+static auto g_craftComponent = SR_FIELD(SDK::UCrCraftingComponent*, ACrCrafter, CraftComponent, 0);
+static auto g_crafterSize    = SR_SIZE_CHECK(ACrCrafter);
+
+extern "C" __declspec(dllexport)
+void OnPluginLoadHooks(IPluginSelf* self, IPluginHookScanner* scan)
+{
+    // A game function, by its global key; the pattern is your fallback (may be nullptr).
+    g_beginPlay = PluginMap::Function(scan, self, "UWorld::BeginPlay",
+        "40 53 48 83 EC 20 48 8B D9 E8 ?? ?? ?? ??");
+    // A game global, kind DATA.
+    g_gworld = PluginMap::Global<SDK::UWorld*>(scan, self, "GWorld");
+    // A site of your own, read as "MyPlugin/FatalReportCall": an E8 inside a function.
+    g_fatalCall = PluginMap::Site(scan, self, "FatalReportCall", "E8 ?? ?? ?? ?? 48 8B 4C 24 ??",
+        PLUGIN_SCAN_IN_FUNCTION);
+    // Members and class sizes for the running build.
+    PluginMap::ResolveFields(scan, self, g_craftComponent, g_crafterSize);
+}
+
+extern "C" __declspec(dllexport)
+bool PluginInit(IPluginSelf* self)
+{
+    PluginSdkRuntime::Init(self->hooks);   // first, before any early return
+    // ...
+}
+
+// Later, on the game thread:
+if (auto* component = g_craftComponent.In(crafter))   // null when not resolved
+    UseComponent(*component);
+SDK::UWorld* world = PluginSdkRuntime::GetWorld();     // instead of SDK::UWorld::GetWorld()
+```
+
+| Helper | What it does |
+|--------|--------------|
+| `PluginMap::Function(scan, self, key, pattern, kind, flags, resultOffset, followRel32At)` | `Resolve` with `PLUGIN_SCAN_FLAG_MAP_KEY` (see [Map keys](#map-keys-plugin_scan_flag_map_key)). `kind` defaults to `FUNCTION_START`; `flags` takes `OPTIONAL` and `FOLLOW_REL32` as before. 0 = a recorded failure. |
+| `PluginMap::FunctionAs<Fn>(...)` | The same, as a function pointer: `FunctionAs<void (*)(SDK::UWorld*)>(...)`. |
+| `PluginMap::Global<T>(scan, self, key, pattern = nullptr)` | A global by name, kind `DATA`, as a `T*`. |
+| `PluginMap::Site(scan, self, hookName, pattern, kind, ...)` | Your own site, `<PluginInfo name>/<hookName>`, kept under the request's fingerprint: it needs its own pattern. |
+| `PluginMap::Request(key, pattern, kind, ...)` | The request the helpers send, not sent, for adding `candidates` before you call `Resolve` yourself. |
+| `SR_FIELD(T, Class, Member, flags)` | A `PluginField<T>`: `In(object)` gives the member or null. `flags` takes `PLUGIN_FIELD_NATIVE` and `PLUGIN_FIELD_CHECK`. |
+| `SR_BITFIELD(Class, Member)` | A `PluginBitField`: `Get(object)` and `Set(object, value)`. |
+| `SR_SIZE_CHECK(Class)` | A checked class size: the request fails on a build where the class's size changed. |
+| `PluginMap::ResolveFields(scan, self, fields...)` | `ResolveField` for each, every one asked even after a failure, so the log lists them all. Sends `PLUGIN_GAME_BUILT_CL` as `builtCL`. True when all resolved. |
+| `PluginVersionMap::Attach(request)`, `PluginVersionMap::ResolveFields(...)` | `plugin_version_map.h`: the same with your generated rows for the key and its `kBuiltCL`. |
+| `PluginSdkRuntime::Init(self->hooks)`, `GetWorld()`, `Globals()` | Points your copy of the SDK's `GObjects` and `FName::AppendString` at the running build's, from `GetSdkGlobals`. `GetWorld()` replaces `SDK::UWorld::GetWorld()`, which reads the compiled `Offsets::GWorld`. |
+| `PluginLazyField<T>{ "Member" }` | A Blueprint (`_C`) member, which has no SDK offset: `In(hooks->ObjectProperties, object)` looks it up by name on first use and caches the offset per class. Game thread only. |
+
+With `PLUGIN_GAME_BUILT_CL` 0 the loader does not know your build, so a `PLUGIN_FIELD_NATIVE` member
+resolves only from a row for the running build, and a checked bitfield fails.
+
+**`PluginInfo` (v72).** Two members follow `pluginTarget`. The six-member initializer above still
+compiles, and fills them with `PLUGIN_GAME_BUILT_CL` and 0. Once your plugin meets the checklist
+below, write all eight:
+
+```cpp
+static PluginInfo s_pluginInfo = {
+    "MyPlugin",
+    "1.0.0",
+    "Your Name",
+    "What this plugin does",
+    PLUGIN_INTERFACE_VERSION,
+    PLUGIN_TARGET_CLIENT,
+    PLUGIN_GAME_BUILT_CL,   // the game build your Game-SDK was generated for
+    PLUGIN_MAP_MIGRATED     // only a migrated plugin may run on another game build
+};
+```
+
+**Migration checklist.** Set `PLUGIN_MAP_MIGRATED` only when all of these hold:
+
+1. `Shared.props` defines `PLUGIN_GAME_BUILT_CL` from `build_cl.txt` (the SDK's does), and your
+   Game-SDK has that file, so the value is not 0.
+2. Every game function you reach through an address comes from `PluginMap::Function`, `FunctionAs`,
+   `Global` or `Site`, or a `Resolve` request with `PLUGIN_SCAN_FLAG_MAP_KEY`.
+3. Every member of a game class you read or write through the compiled SDK is an `SR_FIELD`, an
+   `SR_BITFIELD` or a `PluginLazyField`, or sits in a struct whose size an `SR_SIZE_CHECK` covers
+   (a struct you copy by value, a `TArray` element you step through). The engine's and Dumper-7's
+   own members (`UObject::Class`, `FName`, `TArray`'s data and count) stay compiled in.
+4. `PluginInit` calls `PluginSdkRuntime::Init(self->hooks)` as its first statement, before any
+   early return, and the plugin calls `PluginSdkRuntime::GetWorld()`, never
+   `SDK::UWorld::GetWorld()`.
+5. `PluginMap::ResolveFields` (or `PluginVersionMap::ResolveFields`) asks for every field and size
+   row in `OnPluginLoadHooks`.
 
 #### The function table
 
@@ -2508,7 +2611,7 @@ The loader accepts plugins whose `interfaceVersion` is in `[PLUGIN_INTERFACE_VER
 | v69     | no          | Added `IPluginConsole::ExecuteWithEngine`, appended at the bottom of `IPluginConsole`. `Execute` only runs registered commands, so a plugin bridging a remote console (RCON, an HTTP route) could not reach cvars, `log`, or the `CrRepGraph.*` / `Net.*` families. `ExecuteWithEngine` takes a line exactly as typed into the `-console` window -- registry first, engine otherwise, leading `!` for engine-only -- and runs **every** command on the game thread, so both callbacks always fire from there. An unknown command is an `Error` line; `false` means only a null/empty argument. `Execute` is unchanged (a v63 plugin may rely on its `false` meaning "not a registered command"). See [hooks->Console](#hooks-console). MIN remains 66. |
 | v70     | **yes**     | **Mouse wheel input, and `FreeTexture` made safe to call at any time.** Added `PluginWheelModifiers`, `PluginMouseWheelEvent`, `PluginMouseWheelCallback` and `IPluginInputEvents::RegisterMouseWheel` / `UnregisterMouseWheel` (appended at the bottom of `IPluginInputEvents`). Handlers see the wheel during normal gameplay -- not only while a ModLoader window has capture, which is all `GetMouseWheel` could offer -- with sided modifiers, raw and notch deltas for both axes and the cursor position, and can return `true` to consume the event so the game never sees it. Handlers run on the game thread in registration order; the first `true` stops the chain; registrations are dropped on unload/reload. See [hooks->Input](#hooks-input). **Behaviour change (loader-side, reaches older plugins too):** `IPluginImGuiTextures::FreeTexture` now retires the texture -- it stops drawing at once, and the resource and slot are released only after the GPU has finished every frame that could have drawn them. Freeing on the spot raced the render thread and could GPU-fault. A freed slot becomes reusable a frame or two later. See [hooks->ImGuiTextures](#hooks-imguitextures). The additions themselves are layout-safe, but MIN was then raised to 70, so **every plugin must be rebuilt against the v70 header**. |
 | v71     | no          | **Read-only UI state and two config entry types.** Added `IPluginGameMenu::IsPauseMenuOpen`, `IPluginUIEvents::IsOverlayOpen`, `IModLoaderImGui::IsKeyPressed` (a Win32 virtual-key code, readable while a text field has focus), `PluginWindowFlags_PauseMenuMouseInputs` (a widget that takes the mouse while the pause menu is open), and `ConfigValueType::Choice` / `ConfigValueType::Hidden` (see [Config System](#config-system-plugin_configh-pattern)). Appended at the bottom of each struct or enum: MIN remains 70. |
-| v72     | no          | **Per-build locators, field requests and the Game-SDK globals**, so one plugin build can run on several game builds. Added `PluginScanCandidate` and, appended to `PluginScanRequest`, `candidates` / `candidateCount`: the locators a plugin knows for one hookName on other game builds. The loader uses the row for the running changelist; with none, it accepts only an address every locator that matches agrees on (see [Locators for other game builds](#locators-for-other-game-builds)). Added `PluginFieldRequest`, `PluginFieldCandidate`, `PluginFieldResult` and `IPluginHookScanner::ResolveField` (the offset of a game-class member on the running build), and `PluginSdkGlobals` / `IPluginEngineEvents::GetSdkGlobals`. Added `PLUGIN_SCAN_FLAG_MAP_KEY`: `hookName` names a key in the loader's own version map, and `pattern` and `candidates` become the plugin's fallback (see [Map keys](#map-keys-plugin_scan_flag_map_key)). Added `IPluginInputEvents::IsKeyHeld` (polls a keybind name; aware of window focus and text fields; see [hooks->Input](#hooks-input)) and `IPluginEngineEvents::IsGameThread` (see [hooks->Engine](#hooks-engine)). Its own version because v71 loaders exist without these slots: a v71 loader refuses a v72 plugin and lists it as **Needs loader**, instead of letting it call past the end of a table. MIN remains 70. |
+| v72     | no          | **Per-build locators, field requests and the Game-SDK globals**, so one plugin build can run on several game builds. Added `PluginScanCandidate` and, appended to `PluginScanRequest`, `candidates` / `candidateCount`: the locators a plugin knows for one hookName on other game builds. The loader uses the row for the running changelist; with none, it accepts only an address every locator that matches agrees on (see [Locators for other game builds](#locators-for-other-game-builds)). Added `PluginFieldRequest`, `PluginFieldCandidate`, `PluginFieldResult` and `IPluginHookScanner::ResolveField` (the offset of a game-class member on the running build), and `PluginSdkGlobals` / `IPluginEngineEvents::GetSdkGlobals`. Added `PLUGIN_SCAN_FLAG_MAP_KEY`: `hookName` names a key in the loader's own version map, and `pattern` and `candidates` become the plugin's fallback (see [Map keys](#map-keys-plugin_scan_flag_map_key)). Added `IPluginInputEvents::IsKeyHeld` (polls a keybind name; aware of window focus and text fields; see [hooks->Input](#hooks-input)) and `IPluginEngineEvents::IsGameThread` (see [hooks->Engine](#hooks-engine)). The SDK's `plugin_map.h` and `plugin_version_map.h` fill these requests (see [SDK helpers](#sdk-helpers-plugin_maph-plugin_version_maph)). Its own version because v71 loaders exist without these slots: a v71 loader refuses a v72 plugin and lists it as **Needs loader**, instead of letting it call past the end of a table. MIN remains 70. |
 
 The current `PLUGIN_INTERFACE_VERSION_MIN` is **70** and `PLUGIN_INTERFACE_VERSION_MAX` is **72** (see `plugin_interface.h` for the authoritative value and full per-version changelog comments).
 
