@@ -13,9 +13,8 @@
   ],
   "exceptions": [
     { "plugin": "BetterCheats", "file": "BetterCheats/aob_patterns.h", "kind": "offset", "what": "kHeatGateJumpOffset", "reason": "byte distance into a matched code pattern (a code-shape check), not a game member offset" },
-    { "plugin": "BetterCheats", "file": "BetterCheats/enemies.cpp", "kind": "offset", "what": "base + 0x38", "reason": "UMassEntitySubsystem::EntityManager, a MassEntity engine class, kept compiled on purpose" },
-    { "plugin": "BetterCheats", "file": "BetterCheats/machine_power.cpp", "kind": "offset", "what": "massEntitySubsystem ) + 0x38", "reason": "UMassEntitySubsystem::EntityManager, a MassEntity engine class, kept compiled on purpose" },
     { "plugin": "BetterCheats", "file": "BetterCheats/machine_power.cpp", "kind": "offset", "what": "entityManager ) + 0x120", "reason": "FMassEntityManager::ConstSharedFragmentsContainer, a MassEntity engine class, kept compiled on purpose" },
+    { "plugin": "BetterCheats", "file": "BetterCheats/machine_power.cpp", "kind": "offset", "what": "sharedMemory ) + 0x08", "reason": "FStructSharedMemory payload (the shared struct's data follows its UScriptStruct*): a MassEntity engine layout, kept compiled on purpose. A field request cannot name it: the loader refuses a row past the end of the class's 0x8 bytes" },
     { "plugin": "Compass", "file": "src/compass/compass_textures.h", "kind": "offset", "reason": "UObject flags and index, FUObjectItem and UStreamableRenderAsset/UTexture flags: core engine layout, kept compiled on purpose" },
     { "plugin": "ProductionViewer", "file": "ProductionViewer/Plugin Core/Signatures/plugin_signatures.h", "kind": "offset", "reason": "byte distances to a call inside a matched code pattern (a code-shape check), not game member offsets" },
     { "plugin": "ProductionViewer", "file": "ProductionViewer/Production Viewer/production_basecore.cpp", "kind": "offset", "reason": "TSharedPtr reference controller strong and weak counts: engine layout, kept compiled on purpose" },
