@@ -6,7 +6,7 @@
 // plugin that asks through these keeps working when an update moves them.
 //
 // Needs no generated header: the game build the plugin was compiled for is
-// PLUGIN_GAME_BUILT_CL (Shared.props, from the Game-SDK's build_cl.txt). A
+// PLUGIN_GAME_BUILT_CL (PluginGameBuild.props in this SDK). A
 // plugin with rows of its own (version_map.generated.h) includes
 // plugin_version_map.h instead, which adds them on top of this header.
 //
@@ -205,12 +205,44 @@ namespace PluginMap
     }
 }
 
+namespace PluginMap
+{
+    // The member's value, or `fallback` when it did not resolve (its feature is
+    // off), so code that can do without it still runs.
+    template <class T, class Object>
+    T ValueOr(const PluginField<T>& field, const Object* object, T fallback = T{})
+    {
+        const T* at = field.In(static_cast<const void*>(object));
+        return at ? *at : fallback;
+    }
+
+    // A feature's keys from the rows it needs: a field or SR_SIZE_CHECK row, or
+    // a key string (a Function, Global or Site key).
+    inline void AddKey(std::vector<const char*>& keys, const char* key) { keys.push_back(key); }
+    inline void AddKey(std::vector<const char*>& keys, const PluginFieldSpec& field) { keys.push_back(field.key); }
+
+    template <class... Key>
+    std::vector<const char*> KeysOf(const Key&... keys)
+    {
+        std::vector<const char*> all;
+        (AddKey(all, keys), ...);
+        return all;
+    }
+}
+
 // A part of a plugin that can be off while the rest runs. `keys` are the names
 // the feature needs, as the plugin passes them to the loader: a Function,
 // Global or Site key (the hookName, without any "<plugin>/"), or a field's
 // "Class::Member". `configKeys` are the "Section.Key" config entries it drives
-// ("Section.*" for a whole section), which the config page greys out while the
-// feature is off. A key listed by more than one feature turns off all of them.
+// ("Section.*" for a whole section), which the config page shows as off while
+// the feature is off. A key listed by more than one feature turns off all of
+// them.
+//
+// Shared keys: list a key in every feature that uses it, so its miss turns off
+// exactly those. Leave a key core (in no feature) only when the plugin can do
+// nothing without it, such as the object or hook every feature starts from:
+// its miss refuses the plugin. Build the lists with KeysOf from the rows
+// themselves, so a typo cannot leave a key core.
 struct PluginMapFeature
 {
     const char*              id;          // unique within the plugin

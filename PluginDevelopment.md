@@ -758,13 +758,40 @@ in the failure window. The log has one line per field:
 Two header-only layers in the SDK's `include/` fill the requests above for you:
 
 - **`plugin_map.h`** needs no generated header. Include it after `plugin_interface.h` and the
-  Game-SDK headers. Your game build is `PLUGIN_GAME_BUILT_CL`, which `Shared.props` reads from the
-  `build_cl.txt` beside the Game-SDK's `Client\` or `Server\` folder (0 when there is none).
+  Game-SDK headers. Your game build is `PLUGIN_GAME_BUILT_CL`, which the SDK's
+  `PluginGameBuild.props` defines (see [Your game build](#your-game-build-plugin_game_built_cl)).
 - **`plugin_version_map.h`** includes `plugin_map.h` and adds your own rows from
   `version_map.generated.h` (written by starrupture-ci's `ci/version-map.mjs`), for keys the
   loader's map does not hold yet. Include it after that header. It does not compile when the
   header's `kBuiltCL` is not your Game-SDK's `PLUGIN_GAME_BUILT_CL`, unless `PLUGIN_GAME_BUILT_CL` is 0
-  (no `build_cl.txt`), where the check passes.
+  (no build known), where the check passes.
+
+#### Your game build (PLUGIN_GAME_BUILT_CL)
+
+`PluginInfo::gameBuiltCL` says which game build your Game-SDK was generated from. The loader runs
+your plugin on that build as it always did, and on another build only if it is migrated
+(`PLUGIN_MAP_MIGRATED`, below), which needs the value set. `PluginGameBuild.props`, at the SDK's
+root, defines `PLUGIN_GAME_BUILT_CL` from the first of these that is there:
+
+1. A `PluginGameBuiltCL` property: `/p:PluginGameBuiltCL=127004` on the build (what a build script
+   or CI passes for the build it checked your Game-SDK against), or a property your `Shared.props`
+   sets before the import, to pin it.
+2. The `build_cl.txt` beside the Game-SDK's `Client\` or `Server\` folder, if it has one.
+3. Nothing: no define, and your plugin declares build 0.
+
+Import it once from your `Shared.props`, after `GameSDKRoot` and `PluginSDKInclude` are set, in place
+of a copy of the block:
+
+```xml
+<PropertyGroup>
+  <PluginGameBuiltCL Condition="'$(PluginGameBuiltCL)' == ''">127004</PluginGameBuiltCL>
+</PropertyGroup>
+<Import Project="$(PluginSDKInclude)\..\PluginGameBuild.props"
+        Condition="Exists('$(PluginSDKInclude)\..\PluginGameBuild.props')" />
+```
+
+The `PropertyGroup` is the pin, and is optional. The SDK's own `Shared.props` imports the file the
+same way.
 
 ```cpp
 #include "plugin_map.h"
@@ -830,7 +857,7 @@ A feature is a part of your plugin that can be off while the rest runs. Without 
 resolve is core: one miss after a game update refuses the whole plugin. With one, a miss on a key
 the feature lists turns off only that feature.
 
-**Declare.** `IPluginHookScanner::DeclareFeature(self, &desc)` (appended in v72;
+**Declare.** `IPluginHookScanner::DeclareFeature(self, &desc)` (appended in v73;
 `PluginFeatureDesc` in `plugin_interface.h`), or `PluginMap::DeclareFeatures` from `plugin_map.h`.
 Call it in `OnPluginLoadHooks`, before the resolves it covers; a miss before the declaration is a
 core miss.
@@ -839,7 +866,7 @@ core miss.
 |---|---|
 | `id` | Unique within the plugin. Used in the log. |
 | `title` | What a player reads. Plain English, the thing they would notice missing: "Mining laser tuning", not `ADroneLaser hooks`. |
-| `keys` | At least one: the `hookName` of a Function, Global or Site request, or a field's `"Class::Member"`. A key listed by two features turns both off. |
+| `keys` | At least one: the `hookName` of a Function, Global or Site request, or a field's `"Class::Member"`. A key listed by two features turns both off. Build it with `PluginMap::KeysOf(rows...)`. |
 | `configKeys` | The `"Section.Key"` config entries the feature drives (`"Section.*"` for a section). May be empty. |
 | `enabled` | Set true on declare, false on a miss. `PluginMap::Feature::On()` reads it. |
 
@@ -853,9 +880,14 @@ g_beam = PluginMap::Function(scan, self, "ADroneLaser::Beam", "48 89 5C 24 ?? 57
 ```
 
 `ExamplePlugin/plugin.cpp` declares one feature the same way. Check `On()` before installing
-anything the feature depends on, and before reading its fields. Keys that belong to no feature stay
-core, so keep the list for what the plugin can do without: if the plugin is pointless without a
-key, leave it out of every feature.
+anything the feature depends on, and before reading its fields.
+
+**Shared keys.** List a key in every feature that uses it, so its miss turns off exactly those
+features. Leave a key core (in no feature) only when the plugin can do nothing without it, such as
+the object or hook every feature starts from: its miss refuses the plugin. Build the lists from the
+rows themselves, `PluginMap::KeysOf(SR_FIELD rows, SR_SIZE_CHECK rows, "hook keys"...)`, so a typo
+cannot leave a key core. `PluginMap::ValueOr(field, object, fallback)` reads a member whose feature
+may be off.
 
 **Resolution order, then what a miss costs.** For a function key (fields: see
 [Game-class fields](#game-class-fields-resolvefield)):
@@ -873,14 +905,15 @@ has the full rules (absent rows, AMBIGUOUS, shared names).
 **What players see.** The plugin loads. The failure window lists each
 feature that is off by its `title`, with the key and the reason; `ModLoader.log` gets one line,
 `[Map] MyPlugin: feature "Mining laser tuning" is off: ADroneLaser::Beam (...)`. The config entries
-in `configKeys` are reported as off (`PluginHookReport::ConfigOffReason`) for the settings page to
-grey out; their stored values are kept, so the setting returns when the feature does.
+in `configKeys` are reported as off (`PluginHookReport::ConfigOffReason`): the settings page shows
+them as off, with the reason; their stored values are kept, so the setting returns when the feature
+does.
 
 **When the plugin is still refused.** `PluginInit` is not called and the plugin is listed as failed
 or incompatible for:
-- an interface mismatch: a v72 plugin on a loader that only has v71 shows as needing a newer mod
-  loader, and a loader older than `DeclareFeature` has a shorter `IPluginHookScanner` table, so
-  install the loader and its plugins together;
+- an interface newer than the loader's: a v73 plugin (the first with `DeclareFeature`) on a v72
+  loader shows as needing a newer mod loader. An older interface is never refused for its age; a
+  plugin before v70 is judged as built for a game build before CL-127004, below;
 - no built CL: a tail that sets `PLUGIN_MAP_MIGRATED` but names no game build is refused on every
   build, and on another build than its own a plugin must be migrated (see
   [Admission](https://github.com/AlienXAXS/StarRupture-ModLoader/blob/main/VersionMap.md#admission));
@@ -907,8 +940,9 @@ static PluginInfo s_pluginInfo = {
 
 **Migration checklist.** Set `PLUGIN_MAP_MIGRATED` only when all of these hold:
 
-1. `Shared.props` defines `PLUGIN_GAME_BUILT_CL` from `build_cl.txt` (the SDK's does), and your
-   Game-SDK has that file, so the value is not 0.
+1. `PLUGIN_GAME_BUILT_CL` is not 0: your `Shared.props` imports `PluginGameBuild.props` and pins
+   `PluginGameBuiltCL`, or your build passes it, or your Game-SDK has `build_cl.txt`
+   ([Your game build](#your-game-build-plugin_game_built_cl)).
 2. Every game function you reach through an address comes from `PluginMap::Function`, `FunctionAs`,
    `Global` or `Site`, or a `Resolve` request with `PLUGIN_SCAN_FLAG_MAP_KEY`.
 3. Every member of a game class you read or write through the compiled SDK is an `SR_FIELD`, an
