@@ -66,6 +66,33 @@
   </ItemDefinitionGroup>
 
   <!-- ============================================================
+       PLUGIN_GAME_BUILT_CL
+       The game build (CL) the Game-SDK was generated from, read from
+       the build_cl.txt beside its Client\ or Server\ SDK, and stored
+       in PluginInfo::gameBuiltCL by plugin_interface.h. The Game-SDK
+       is GameSDKRoot when that is set, else the StarRupture SDK
+       folder. No file: no define, and the plugin declares build 0.
+       ============================================================ -->
+  <PropertyGroup>
+    <StarRuptureGameSDKRoot Condition="'$(GameSDKRoot)' != ''">$(GameSDKRoot)</StarRuptureGameSDKRoot>
+    <StarRuptureGameSDKRoot Condition="'$(GameSDKRoot)' == ''">$(SolutionDir)StarRupture SDK</StarRuptureGameSDKRoot>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)' == 'Client Debug' Or '$(Configuration)' == 'Client Release'">
+    <StarRuptureBuildCLFile>$(StarRuptureGameSDKRoot)\Client\build_cl.txt</StarRuptureBuildCLFile>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)' == 'Server Debug' Or '$(Configuration)' == 'Server Release'">
+    <StarRuptureBuildCLFile>$(StarRuptureGameSDKRoot)\Server\build_cl.txt</StarRuptureBuildCLFile>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(StarRuptureBuildCLFile)' != '' And Exists('$(StarRuptureBuildCLFile)')">
+    <StarRuptureGameBuiltCL>$([System.IO.File]::ReadAllText('$(StarRuptureBuildCLFile)').Trim())</StarRuptureGameBuiltCL>
+  </PropertyGroup>
+  <ItemDefinitionGroup Condition="'$(StarRuptureGameBuiltCL)' != ''">
+    <ClCompile>
+      <PreprocessorDefinitions>PLUGIN_GAME_BUILT_CL=$(StarRuptureGameBuiltCL)u;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+  </ItemDefinitionGroup>
+
+  <!-- ============================================================
        AUTOUPDATE_MANIFEST_URL
        Injected by CI per variant via /p:AutoUpdateManifestUrl="https://...".
        Baked into dwmapi.dll as the default manifest URL.
