@@ -813,7 +813,7 @@ SDK::UWorld* world = PluginSdkRuntime::GetWorld();     // instead of SDK::UWorld
 | `PluginMap::ResolveFields(scan, self, fields...)` | `ResolveField` for each, every one asked even after a failure, so the log lists them all. Sends `PLUGIN_GAME_BUILT_CL` as `builtCL`. True when all resolved. |
 | `PluginVersionMap::Attach(request)`, `PluginVersionMap::ResolveFields(...)` | `plugin_version_map.h`: the same with your generated rows for the key and its `kBuiltCL`. |
 | `PluginSdkRuntime::Init(self->hooks)`, `GetWorld()`, `Globals()` | Points your copy of the SDK's `GObjects` and `FName::AppendString` at the running build's, from `GetSdkGlobals`. `GetWorld()` replaces `SDK::UWorld::GetWorld()`, which reads the compiled `Offsets::GWorld`. |
-| `PluginLazyField<T>{ "Member" }` | A Blueprint (`_C`) member, which has no SDK offset: `In(hooks->ObjectProperties, object)` looks it up by name on first use and caches the offset per class. Game thread only. |
+| `PluginLazyField<T>{ "Member" }` | A member the plugin can live without: a Blueprint (`_C`) member, which has no SDK offset, or a native member whose feature turns off when it is missing. `In(hooks->ObjectProperties, object)` looks it up by name on first use, checks its size against `sizeof(T)` and caches the offset per class; null when it is not there. Game thread only. |
 
 With `PLUGIN_GAME_BUILT_CL` 0 the loader does not know your build, so through `PluginMap::ResolveFields`
 a `PLUGIN_FIELD_NATIVE` member resolves only from a row for the running build, and a checked bitfield

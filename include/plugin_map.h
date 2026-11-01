@@ -246,9 +246,10 @@ namespace PluginSdkRuntime
     }
 }
 
-// A member of a Blueprint (_C) class, which has no SDK offset to compile in:
-// found by name through the loader's reflection on first use, then cached as
-// an offset per class. Game thread only (it is not synchronised). The cache
+// A member the plugin can live without, found by name through the loader's
+// reflection on first use and cached as an offset per class: a member of a
+// Blueprint (_C) class, which has no SDK offset to compile in, or a native
+// member whose feature simply turns off when it is missing. Game thread only (it is not synchronised). The cache
 // key is the class's object index and name, never the class pointer alone,
 // so a class unloaded and replaced looks the member up again.
 template <typename T>
