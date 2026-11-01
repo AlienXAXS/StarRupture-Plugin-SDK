@@ -238,7 +238,8 @@ Mod loader scans Plugins/ directory
     --> calls OnPluginLoadHooks(self, scanner)   -- OPTIONAL export, the only place a
                                                    plugin may pattern scan (v62+).
         -- resolve every AOB you depend on
-        -- ANY miss refuses the plugin: PluginInit is never called and the DLL is freed
+        -- a miss refuses the plugin unless its key belongs to a feature you declared
+        -- (DeclareFeature), which turns that feature off instead
         -- self->hooks is null here; install nothing yet
     --> calls PluginInit(self)   -- IPluginSelf* bundles name, version, logger, config, hooks
         -- store self pointer (stable for the plugin's lifetime)
@@ -492,7 +493,8 @@ void OnPluginLoadHooks(IPluginSelf* self, IPluginHookScanner* scan)
 }
 ```
 
-**Any miss refuses the plugin -- one is enough.** `PluginInit` is never called, the DLL is freed,
+**A miss refuses the plugin, unless the key belongs to a feature you declared** (see
+[Features](#features----declarefeature)). `PluginInit` is never called, the DLL is freed,
 and the miss is listed in the hook-failure popup (client) and by the `hookfailures` console
 command (both), with a copy-to-clipboard button so a user can hand you something actionable.
 `ResolveOptional` / `ReportWarning` change only the `[optional]` label on the report line, not the
@@ -638,7 +640,8 @@ check whether candidates are supported.
 #### Map keys (PLUGIN_SCAN_FLAG_MAP_KEY)
 
 From v72 the loader carries its own version map: rows for each game build it supports, kept up to
-date by its CI. With `PLUGIN_SCAN_FLAG_MAP_KEY`, `hookName` is a key in that map, and `pattern` and
+date by its CI. What the map holds, how the loader picks a row and how the map reaches players is in
+[VersionMap.md](https://github.com/AlienXAXS/StarRupture-ModLoader/blob/main/VersionMap.md). With `PLUGIN_SCAN_FLAG_MAP_KEY`, `hookName` is a key in that map, and `pattern` and
 `candidates` become your own fallback, each of which may be null. Main module only; the dedicated
 server's map holds no rows, so there a key runs on your pattern and candidates alone (the refused
 names below still apply).
@@ -660,8 +663,9 @@ kind, its pattern as the loader parses it, `resultOffset` and `followRel32At` (-
 they were verified with: a site key needs its own pattern, and changing the pattern or an offset
 reads none of the old rows until the map has rows for the new request.
 
-**Order.** The map's row for the running build first, then your candidates' row for it, then an
-address every locator (your pattern included) agrees on, as in
+**Order.** The map's row for the running build, the latest build's row verified on this one, then
+your candidates and pattern, then (for a declared feature) off, else an error: see
+[Features](#features----declarefeature). Your candidates are read as in
 [Locators for other game builds](#locators-for-other-game-builds). When one of your candidates has
 an `rva` and is for this very exe, the map's pick must land on that `rva`, or the resolve fails as
 AMBIGUOUS. Rows the map holds under the key for another kind, or for another fingerprint of a site,
@@ -754,13 +758,40 @@ in the failure window. The log has one line per field:
 Two header-only layers in the SDK's `include/` fill the requests above for you:
 
 - **`plugin_map.h`** needs no generated header. Include it after `plugin_interface.h` and the
-  Game-SDK headers. Your game build is `PLUGIN_GAME_BUILT_CL`, which `Shared.props` reads from the
-  `build_cl.txt` beside the Game-SDK's `Client\` or `Server\` folder (0 when there is none).
+  Game-SDK headers. Your game build is `PLUGIN_GAME_BUILT_CL`, which the SDK's
+  `PluginGameBuild.props` defines (see [Your game build](#your-game-build-plugin_game_built_cl)).
 - **`plugin_version_map.h`** includes `plugin_map.h` and adds your own rows from
   `version_map.generated.h` (written by starrupture-ci's `ci/version-map.mjs`), for keys the
   loader's map does not hold yet. Include it after that header. It does not compile when the
   header's `kBuiltCL` is not your Game-SDK's `PLUGIN_GAME_BUILT_CL`, unless `PLUGIN_GAME_BUILT_CL` is 0
-  (no `build_cl.txt`), where the check passes.
+  (no build known), where the check passes.
+
+#### Your game build (PLUGIN_GAME_BUILT_CL)
+
+`PluginInfo::gameBuiltCL` says which game build your Game-SDK was generated from. The loader runs
+your plugin on that build as it always did, and on another build only if it is migrated
+(`PLUGIN_MAP_MIGRATED`, below), which needs the value set. `PluginGameBuild.props`, at the SDK's
+root, defines `PLUGIN_GAME_BUILT_CL` from the first of these that is there:
+
+1. A `PluginGameBuiltCL` property: `/p:PluginGameBuiltCL=127004` on the build (what a build script
+   or CI passes for the build it checked your Game-SDK against), or a property your `Shared.props`
+   sets before the import, to pin it.
+2. The `build_cl.txt` beside the Game-SDK's `Client\` or `Server\` folder, if it has one.
+3. Nothing: no define, and your plugin declares build 0.
+
+Import it once from your `Shared.props`, after `GameSDKRoot` and `PluginSDKInclude` are set, in place
+of a copy of the block:
+
+```xml
+<PropertyGroup>
+  <PluginGameBuiltCL Condition="'$(PluginGameBuiltCL)' == ''">127004</PluginGameBuiltCL>
+</PropertyGroup>
+<Import Project="$(PluginSDKInclude)\..\PluginGameBuild.props"
+        Condition="Exists('$(PluginSDKInclude)\..\PluginGameBuild.props')" />
+```
+
+The `PropertyGroup` is the pin, and is optional. The SDK's own `Shared.props` imports the file the
+same way.
 
 ```cpp
 #include "plugin_map.h"
@@ -805,6 +836,7 @@ SDK::UWorld* world = PluginSdkRuntime::GetWorld();     // instead of SDK::UWorld
 | `PluginMap::FunctionAs<Fn>(...)` | The same, as a function pointer: `FunctionAs<void (*)(SDK::UWorld*)>(...)`. |
 | `PluginMap::Global<T>(scan, self, key, pattern = nullptr)` | A global by name, kind `DATA`, as a `T*`. |
 | `PluginMap::Site(scan, self, hookName, pattern, kind, ...)` | Your own site, `<PluginInfo name>/<hookName>`, kept under the request's fingerprint: it needs its own pattern. |
+| `PluginMap::Feature`, `PluginMap::DeclareFeatures(scan, self, features...)` | A part of the plugin that can be off while the rest runs (see [Features](#features----declarefeature)). `feature.On()` is false once a key of it did not resolve. |
 | `PluginMap::Request(key, pattern, kind, ...)` | The request the helpers send, not sent, for adding `candidates` before you call `Resolve` yourself. |
 | `SR_FIELD(T, Class, Member, flags)` | A `PluginField<T>`: `In(object)` gives the member or null. `flags` takes `PLUGIN_FIELD_NATIVE` and `PLUGIN_FIELD_CHECK`. |
 | `SR_BITFIELD(Class, Member)` | A `PluginBitField`: `Get(object)` and `Set(object, value)`. |
@@ -812,12 +844,90 @@ SDK::UWorld* world = PluginSdkRuntime::GetWorld();     // instead of SDK::UWorld
 | `PluginMap::ResolveFields(scan, self, fields...)` | `ResolveField` for each, every one asked even after a failure, so the log lists them all. Sends `PLUGIN_GAME_BUILT_CL` as `builtCL`. True when all resolved. |
 | `PluginVersionMap::Attach(request)`, `PluginVersionMap::ResolveFields(...)` | `plugin_version_map.h`: the same with your generated rows for the key and its `kBuiltCL`. |
 | `PluginSdkRuntime::Init(self->hooks)`, `GetWorld()`, `Globals()` | Points your copy of the SDK's `GObjects` and `FName::AppendString` at the running build's, from `GetSdkGlobals`. `GetWorld()` replaces `SDK::UWorld::GetWorld()`, which reads the compiled `Offsets::GWorld`. |
-| `PluginLazyField<T>{ "Member" }` | A Blueprint (`_C`) member, which has no SDK offset: `In(hooks->ObjectProperties, object)` looks it up by name on first use and caches the offset per class. Game thread only. |
+| `PluginLazyField<T>{ "Member" }` | A member the plugin can live without: a Blueprint (`_C`) member, which has no SDK offset, or a native member whose feature turns off when it is missing. `In(hooks->ObjectProperties, object)` looks it up by name on first use, checks its size against `sizeof(T)` and caches the offset per class; null when it is not there. Game thread only. |
 
 With `PLUGIN_GAME_BUILT_CL` 0 the loader does not know your build, so through `PluginMap::ResolveFields`
 a `PLUGIN_FIELD_NATIVE` member resolves only from a row for the running build, and a checked bitfield
 fails. `PluginVersionMap::ResolveFields` sends the generated header's `kBuiltCL` instead, so a native
 member's `builtOffset` still applies on that build.
+
+#### Features -- DeclareFeature
+
+A feature is a part of your plugin that can be off while the rest runs. Without one, every key you
+resolve is core: one miss after a game update refuses the whole plugin. With one, a miss on a key
+the feature lists turns off only that feature.
+
+**Declare.** `IPluginHookScanner::DeclareFeature(self, &desc)` (appended in v73;
+`PluginFeatureDesc` in `plugin_interface.h`), or `PluginMap::DeclareFeatures` from `plugin_map.h`.
+Call it in `OnPluginLoadHooks`, before the resolves it covers; a miss before the declaration is a
+core miss.
+
+| Member | Meaning |
+|---|---|
+| `id` | Unique within the plugin. Used in the log. |
+| `title` | What a player reads. Plain English, the thing they would notice missing: "Mining laser tuning", not `ADroneLaser hooks`. |
+| `keys` | At least one: the `hookName` of a Function, Global or Site request, or a field's `"Class::Member"`. A key listed by two features turns both off. Build it with `PluginMap::KeysOf(rows...)`. |
+| `configKeys` | The `"Section.Key"` config entries the feature drives (`"Section.*"` for a section). May be empty. |
+| `enabled` | Set true on declare, false on a miss. `PluginMap::Feature::On()` reads it. |
+
+```cpp
+static PluginMap::Feature s_laser{ "laser", "Mining laser tuning",
+    { "ADroneLaser::Beam", "ADroneLaser::Fire" }, { "Drone.LaserScale" } };
+
+PluginMap::DeclareFeatures(scan, self, s_laser);
+g_beam = PluginMap::Function(scan, self, "ADroneLaser::Beam", "48 89 5C 24 ?? 57");
+// ... in PluginInit:  if (s_laser.On()) InstallLaserHooks();
+```
+
+`ExamplePlugin/plugin.cpp` declares one feature the same way. Check `On()` before installing
+anything the feature depends on, and before reading its fields.
+
+**Shared keys.** List a key in every feature that uses it, so its miss turns off exactly those
+features. Leave a key core (in no feature) only when the plugin can do nothing without it, such as
+the object or hook every feature starts from: its miss refuses the plugin. Build the lists from the
+rows themselves, `PluginMap::KeysOf(SR_FIELD rows, SR_SIZE_CHECK rows, "hook keys"...)`, so a typo
+cannot leave a key core. `PluginMap::ValueOr(field, object, fallback)` reads a member whose feature
+may be off.
+
+**Mass entity helpers.** `PluginMap::ResolveMassEntityManager(scanner, self)` asks the loader for
+`UMassEntitySubsystem::EntityManager` (a native row, so it has no Game-SDK name) and
+`PluginMap::MassEntityManagerOf(subsystem)` returns the `FMassEntityManager*`, or null when the member
+did not resolve. List `PluginMap::MassEntityManagerField` in the features that use it. Do not read the
+subsystem at a fixed offset. `ResolveMassSignalWorld`, `MassSignalWorldField()` and `MassSignalWorldOf`
+do the same for `UMassSignalSubsystem::CachedWorld`; they are templates so only a plugin that includes
+`MassSignals_classes.hpp` needs the class.
+
+**Resolution order, then what a miss costs.** For a function key (fields: see
+[Game-class fields](#game-class-fields-resolvefield)):
+
+1. The loader's map row for the running changelist (CL).
+2. Otherwise the row of the latest CL the map has one for, rescanned on this build; it counts only
+   if its pattern resolves here, uniquely and as your request's kind.
+3. Otherwise your own pattern and candidates, where every locator that resolves must agree.
+4. Otherwise the key is unresolved: a declared feature turns off, and a key outside any feature
+   refuses the plugin (an error in the failure window).
+
+The loader's [Selection](https://github.com/AlienXAXS/StarRupture-ModLoader/blob/main/VersionMap.md#selection)
+has the full rules (absent rows, AMBIGUOUS, shared names).
+
+**What players see.** The plugin loads. The failure window lists each
+feature that is off by its `title`, with the key and the reason; `ModLoader.log` gets one line,
+`[Map] MyPlugin: feature "Mining laser tuning" is off: ADroneLaser::Beam (...)`. The config entries
+in `configKeys` are reported as off (`PluginHookReport::ConfigOffReason`): the settings page shows
+them as off, with the reason; their stored values are kept, so the setting returns when the feature
+does.
+
+**When the plugin is still refused.** `PluginInit` is not called and the plugin is listed as failed
+or incompatible for:
+- an interface newer than the loader's: a v73 plugin (the first with `DeclareFeature`) on a v72
+  loader shows as needing a newer mod loader. An older interface is never refused for its age; a
+  plugin before v70 is judged as built for a game build before CL-127004, below;
+- no built CL: a tail that sets `PLUGIN_MAP_MIGRATED` but names no game build is refused on every
+  build, and on another build than its own a plugin must be migrated (see
+  [Admission](https://github.com/AlienXAXS/StarRupture-ModLoader/blob/main/VersionMap.md#admission));
+- the core globals missing: `GetSdkGlobals` returned none (the loader could not find GObjects,
+  `FName::AppendString` or `GWorld`), or `PluginInit` did not take them;
+- any unresolved key that is in no declared feature.
 
 **`PluginInfo` (v72).** Two members follow `pluginTarget`. The six-member initializer above still
 compiles, and fills them with `PLUGIN_GAME_BUILT_CL` and 0. Once your plugin meets the checklist
@@ -838,8 +948,9 @@ static PluginInfo s_pluginInfo = {
 
 **Migration checklist.** Set `PLUGIN_MAP_MIGRATED` only when all of these hold:
 
-1. `Shared.props` defines `PLUGIN_GAME_BUILT_CL` from `build_cl.txt` (the SDK's does), and your
-   Game-SDK has that file, so the value is not 0.
+1. `PLUGIN_GAME_BUILT_CL` is not 0: your `Shared.props` imports `PluginGameBuild.props` and pins
+   `PluginGameBuiltCL`, or your build passes it, or your Game-SDK has `build_cl.txt`
+   ([Your game build](#your-game-build-plugin_game_built_cl)).
 2. Every game function you reach through an address comes from `PluginMap::Function`, `FunctionAs`,
    `Global` or `Site`, or a `Resolve` request with `PLUGIN_SCAN_FLAG_MAP_KEY`.
 3. Every member of a game class you read or write through the compiled SDK is an `SR_FIELD`, an
@@ -853,13 +964,10 @@ static PluginInfo s_pluginInfo = {
    row in `OnPluginLoadHooks`.
 
 **What the loader does with the flag.** It judges a plugin against the game build the plugin was
-compiled for (`PLUGIN_GAME_BUILT_CL`), not the loader's. On that build the plugin loads as ever.
-On any other build the loader lists, the plugin runs only if it is interface v72 or later, sets
-`PLUGIN_MAP_MIGRATED` and calls `GetSdkGlobals` in `PluginInit`; otherwise it is listed as
-**Incompatible** with "Needs an update to run on CL-...", and it still loads on its own build. A
-plugin before v72 has no tail and counts as built for CL-127004, as does a v72 plugin whose
-`PLUGIN_GAME_BUILT_CL` is 0. A tail that sets `PLUGIN_MAP_MIGRATED` and names no build (0) is refused
-on every build.
+compiled for (`PLUGIN_GAME_BUILT_CL`), not the loader's. On any other build it lists, the plugin runs
+only if it is interface v72 or later, sets `PLUGIN_MAP_MIGRATED` and calls `GetSdkGlobals` in
+`PluginInit`; otherwise it is listed as **Incompatible**. The rule, with the cases for a plugin before
+v72 and for a tail that names no build, is in [Admission](https://github.com/AlienXAXS/StarRupture-ModLoader/blob/main/VersionMap.md#admission).
 
 #### The function table
 
@@ -877,6 +985,54 @@ on every build.
 | `HasFailures(self)` | True once anything has missed. Lets you skip the rest of a resolve chain you already know cannot work; does not change the outcome. |
 
 Patterns are IDA-style byte strings where `??` is a wildcard byte.
+
+#### Rule 3 check -- no direct reads of game members
+
+Item 3 of the migration checklist is checked by `tools/rule3-check.mjs`, a source scan. A compiled
+member offset is only right for the build it was compiled against: after a game update that
+reorders members, the read returns the wrong value and a write corrupts memory. A compiler cannot
+see this, so the tool reads the plugin's sources against the Game-SDK headers and flags:
+
+| Kind | What it flags |
+|------|---------------|
+| `member` | `->m` or `.m` where `m` is declared on a game class or struct (looked up through the base classes) |
+| `suspect` | the same on a receiver the scan could not type, when `m` is declared only on game classes |
+| `sizeof` | `sizeof`, `alignof` or `offsetof` of a game type |
+| `stride` | `TArray`, `TSet`, `TMap` or `TSparseArray` of a game struct held by value |
+| `byvalue` | a game struct held, copied or passed by value |
+| `overlay` | memory cast to a struct the plugin declares itself |
+| `offset` | pointer arithmetic with a hex constant, a hard address, or a named offset constant |
+
+`sizeof`, `stride` and `byvalue` of a struct pass when the plugin lists `SR_SIZE_CHECK(thatStruct)`,
+because the loader then checks the size on the running build. Engine classes (CoreUObject, Engine,
+UMG, GameplayAbilities, MassEntity and so on) are not flagged; every other package is the game's.
+
+Run it from the plugin's repository:
+
+    node <PluginSDK>/tools/rule3-check.mjs --plugin <Name> --sdk <Game-SDK>/Client/SDK --source <plugin dir>
+
+A plugin that imports `tools\Rule3Check.targets` from its `Shared.props` runs it before compile.
+`--mode` is `auto` (default), `enforce` or `report`: in `auto` the findings are warnings until the
+plugin defines `PLUGIN_MAP_MIGRATED`, then they fail the build. `--json <file>` writes the result.
+Output lines use the MSBuild error format. Exit codes: 0 pass, 3 findings under enforce, 2 bad usage.
+
+**Allow-list.** `tools/rule3-allow.json` lists what is not a violation. Every entry needs a
+`reason`: the tool refuses a file with an entry that has none, and warns about an exception that
+matches nothing. `enginePackages` names the Dumper-7 packages that are the engine's. `exceptions`
+are per site:
+
+    { "plugin": "BetterCheats", "file": "BetterCheats/enemies.cpp", "kind": "offset",
+      "what": "base + 0x38", "reason": "UMassEntitySubsystem::EntityManager, a MassEntity engine class" }
+
+`plugin` and `file` (a path suffix) narrow the entry, `kind` is one of the kinds above and `what`
+is a substring of the flagged text. A reviewer approves each new entry.
+
+**Fixing a finding.** Request the member by name and read it through the field:
+
+1. Add an `SR_FIELD` (or `SR_BITFIELD`) request and list it in the feature that uses it.
+2. Read it with `field.In(object)` instead of `object->Member`.
+3. For a stride or a struct held by value, list `SR_SIZE_CHECK(Struct)` in the same feature.
+4. For a member that is not reflected, add a native row to the version map.
 
 ---
 

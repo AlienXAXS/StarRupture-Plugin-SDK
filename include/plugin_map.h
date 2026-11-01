@@ -6,7 +6,7 @@
 // plugin that asks through these keeps working when an update moves them.
 //
 // Needs no generated header: the game build the plugin was compiled for is
-// PLUGIN_GAME_BUILT_CL (Shared.props, from the Game-SDK's build_cl.txt). A
+// PLUGIN_GAME_BUILT_CL (PluginGameBuild.props in this SDK). A
 // plugin with rows of its own (version_map.generated.h) includes
 // plugin_version_map.h instead, which adds them on top of this header.
 //
@@ -15,6 +15,13 @@
 // In OnPluginLoadHooks:
 //   g_beginPlay = PluginMap::Function(scanner, self, "UWorld::BeginPlay", "40 53 48 83 EC 20 ...");
 //   PluginMap::ResolveFields(scanner, self, g_craftComponent, g_crafterSize);
+// A part of the plugin that can be off while the rest runs is a feature
+// (PluginMap::Feature): declare it before the resolves it covers, and a key
+// that does not resolve turns that feature off instead of refusing the plugin.
+//   static PluginMap::Feature s_laser{ "mining-laser", "Mining laser tuning",
+//       { "ADroneLaser::Beam", "ADroneLaser::Fire" }, { "Drone.LaserScale" } };
+//   PluginMap::DeclareFeatures(scanner, self, s_laser);
+// ... later: if (s_laser.On()) { ... }
 // In PluginInit, as its first statement, before any early return (off its
 // game build the loader refuses a plugin whose PluginInit did not take the
 // globals, a disabled one included):
@@ -25,6 +32,7 @@
 #include <cstdint>
 #include <cstring>
 #include <type_traits>
+#include <vector>
 
 namespace PluginMap
 {
@@ -51,7 +59,8 @@ namespace PluginMap
     // then `pattern` (may be null). flags: PLUGIN_SCAN_FLAG_OPTIONAL, and
     // PLUGIN_SCAN_FLAG_FOLLOW_REL32 to follow the E8/E9 at followRel32At.
     // A kind other than FUNCTION_START or DATA makes `key` a site (see Site).
-    // 0 = a recorded failure, which refuses the plugin.
+    // 0 = a recorded failure, which refuses the plugin unless a declared
+    // feature lists `key` (then that feature is off).
     inline uintptr_t Function(IPluginHookScanner* scanner, const IPluginSelf* self, const char* key,
         const char* pattern, int kind = PLUGIN_SCAN_FUNCTION_START, uint32_t flags = 0,
         int32_t resultOffset = 0, int32_t followRel32At = 0)
@@ -161,7 +170,8 @@ namespace PluginMap
     // Asks the loader for one field: the map's rows for its key first, then
     // `rows`, this plugin's own (may be null). builtCL is the game build the
     // plugin's SDK was generated for. False = the loader recorded a failure
-    // (which refuses the plugin).
+    // (which refuses the plugin, unless a declared feature lists the field's
+    // key: then that feature is off).
     inline bool ResolveField(IPluginHookScanner* scanner, const IPluginSelf* self, PluginFieldSpec& field,
         const PluginFieldCandidate* rows = nullptr, uint32_t rowCount = 0, uint32_t builtCL = PLUGIN_GAME_BUILT_CL)
     {
@@ -191,6 +201,169 @@ namespace PluginMap
         static_assert((std::is_base_of_v<PluginFieldSpec, Fields> && ...), "ResolveFields takes PluginField, PluginBitField and SR_SIZE_CHECK rows");
         bool all = true;
         ((all = ResolveField(scanner, self, fields) && all), ...);
+        return all;
+    }
+}
+
+namespace PluginMap
+{
+    // The member's value, or `fallback` when it did not resolve (its feature is
+    // off), so code that can do without it still runs.
+    template <class T, class Object>
+    T ValueOr(const PluginField<T>& field, const Object* object, T fallback = T{})
+    {
+        const T* at = field.In(static_cast<const void*>(object));
+        return at ? *at : fallback;
+    }
+
+    // A feature's keys from the rows it needs: a field or SR_SIZE_CHECK row, or
+    // a key string (a Function, Global or Site key).
+    inline void AddKey(std::vector<const char*>& keys, const char* key) { keys.push_back(key); }
+    inline void AddKey(std::vector<const char*>& keys, const PluginFieldSpec& field) { keys.push_back(field.key); }
+
+    template <class... Key>
+    std::vector<const char*> KeysOf(const Key&... keys)
+    {
+        std::vector<const char*> all;
+        (AddKey(all, keys), ...);
+        return all;
+    }
+}
+
+// Mass entity helpers a plugin reaches the game's entity manager and signal
+// subsystem world through. Both read by name through the loader, so a plugin
+// does not hard-code an offset, and a build with no row turns off the feature
+// that lists the key.
+//
+//   PluginMap::ResolveMassEntityManager(scanner, self);          // key: PluginMap::MassEntityManagerField
+//   void* manager = PluginMap::MassEntityManagerOf(subsystem);   // null when unresolved
+//
+// The signal subsystem's world is reflected and needs MassSignals_classes.hpp,
+// which only a plugin that uses it includes:
+//   PluginMap::ResolveMassSignalWorld(scanner, self);            // key: PluginMap::MassSignalWorldField()
+//   SDK::UWorld* world = PluginMap::MassSignalWorldOf(subsystem);
+namespace SDK
+{
+    class UMassSignalSubsystem;
+    class UWorld;
+}
+
+namespace PluginMap
+{
+    // A TSharedPtr<T>: the object pointer and the shared reference controller.
+    struct SharedRef
+    {
+        void* Object;
+        void* Controller;
+    };
+    static_assert(sizeof(SharedRef) == 0x10, "a TSharedPtr is two pointers");
+
+    // UMassEntitySubsystem::EntityManager is a TSharedPtr the Game-SDK folds
+    // into padding (not reflected), so it has no SDK name: a native row. The
+    // loader's map holds its row per game build; the offset here and the row
+    // below are CL-127004's, used when the map has none for the running build.
+    inline PluginField<SharedRef> MassEntityManagerField{ { "UMassEntitySubsystem::EntityManager",
+        "UMassEntitySubsystem", "EntityManager", PLUGIN_FIELD_NATIVE, sizeof(SharedRef), 0x38 } };
+
+    inline const PluginFieldCandidate kMassEntityManagerRows[] = {
+        { 127004, 0x38, static_cast<uint32_t>(sizeof(SharedRef)), 0, nullptr },
+    };
+
+    // Asks the loader for MassEntityManagerField. False when it did not resolve.
+    inline bool ResolveMassEntityManager(IPluginHookScanner* scanner, const IPluginSelf* self)
+    {
+        return ResolveField(scanner, self, MassEntityManagerField, kMassEntityManagerRows,
+            static_cast<uint32_t>(sizeof(kMassEntityManagerRows) / sizeof(kMassEntityManagerRows[0])));
+    }
+
+    // The FMassEntityManager* a UMassEntitySubsystem holds, or null when the
+    // subsystem is null or the member did not resolve.
+    inline void* MassEntityManagerOf(const void* subsystem)
+    {
+        const SharedRef* at = MassEntityManagerField.In(subsystem);
+        return at ? at->Object : nullptr;
+    }
+
+    // UMassSignalSubsystem::CachedWorld, the world the subsystem was created
+    // in. A template so this header does not need MassSignals_classes.hpp: the
+    // offset as compiled is taken where a plugin uses it.
+    template <class Subsystem = SDK::UMassSignalSubsystem>
+    PluginField<SDK::UWorld*>& MassSignalWorldField()
+    {
+        static PluginField<SDK::UWorld*> field{ { "UMassSignalSubsystem::CachedWorld", "UMassSignalSubsystem",
+            "CachedWorld", 0, sizeof(SDK::UWorld*), static_cast<int32_t>(offsetof(Subsystem, CachedWorld)) } };
+        return field;
+    }
+
+    // Asks the loader for MassSignalWorldField(). False when it did not resolve.
+    template <class Subsystem = SDK::UMassSignalSubsystem>
+    bool ResolveMassSignalWorld(IPluginHookScanner* scanner, const IPluginSelf* self)
+    {
+        return ResolveField(scanner, self, MassSignalWorldField<Subsystem>());
+    }
+
+    // The world a UMassSignalSubsystem holds, or null when the subsystem is
+    // null or the member did not resolve.
+    template <class Subsystem = SDK::UMassSignalSubsystem>
+    SDK::UWorld* MassSignalWorldOf(const void* subsystem)
+    {
+        const auto* at = MassSignalWorldField<Subsystem>().In(subsystem);
+        return at ? *at : nullptr;
+    }
+}
+
+// A part of a plugin that can be off while the rest runs. `keys` are the names
+// the feature needs, as the plugin passes them to the loader: a Function,
+// Global or Site key (the hookName, without any "<plugin>/"), or a field's
+// "Class::Member". `configKeys` are the "Section.Key" config entries it drives
+// ("Section.*" for a whole section), which the config page shows as off while
+// the feature is off. A key listed by more than one feature turns off all of
+// them.
+//
+// Shared keys: list a key in every feature that uses it, so its miss turns off
+// exactly those. Leave a key core (in no feature) only when the plugin can do
+// nothing without it, such as the object or hook every feature starts from:
+// its miss refuses the plugin. Build the lists with KeysOf from the rows
+// themselves, so a typo cannot leave a key core.
+struct PluginMapFeature
+{
+    const char*              id;          // unique within the plugin
+    const char*              title;       // what a player reads
+    std::vector<const char*> keys;
+    std::vector<const char*> configKeys;
+
+    // True until the loader reports a key of this feature unresolved. Set by
+    // DeclareFeatures, before OnPluginLoadHooks returns; read-only afterwards.
+    bool on = true;
+    bool On() const { return on; }
+};
+
+namespace PluginMap
+{
+    using Feature = PluginMapFeature;
+
+    // Declares one feature. Call before resolving the keys it lists. False = the
+    // loader did not take it (it declares nothing, so its keys stay core).
+    inline bool DeclareFeature(IPluginHookScanner* scanner, const IPluginSelf* self, Feature& feature)
+    {
+        PluginFeatureDesc desc = PLUGIN_FEATURE_DESC_INIT;
+        desc.id             = feature.id;
+        desc.title          = feature.title;
+        desc.keys           = feature.keys.data();
+        desc.keyCount       = static_cast<uint32_t>(feature.keys.size());
+        desc.configKeys     = feature.configKeys.data();
+        desc.configKeyCount = static_cast<uint32_t>(feature.configKeys.size());
+        desc.enabled        = &feature.on;
+        return scanner->DeclareFeature(self, &desc);
+    }
+
+    // Every feature; each is declared even after a failure. True when all were.
+    template <class... Features>
+    bool DeclareFeatures(IPluginHookScanner* scanner, const IPluginSelf* self, Features&... features)
+    {
+        static_assert((std::is_same_v<Features, Feature> && ...), "DeclareFeatures takes PluginMap::Feature rows");
+        bool all = true;
+        ((all = DeclareFeature(scanner, self, features) && all), ...);
         return all;
     }
 }
@@ -246,9 +419,10 @@ namespace PluginSdkRuntime
     }
 }
 
-// A member of a Blueprint (_C) class, which has no SDK offset to compile in:
-// found by name through the loader's reflection on first use, then cached as
-// an offset per class. Game thread only (it is not synchronised). The cache
+// A member the plugin can live without, found by name through the loader's
+// reflection on first use and cached as an offset per class: a member of a
+// Blueprint (_C) class, which has no SDK offset to compile in, or a native
+// member whose feature simply turns off when it is missing. Game thread only (it is not synchronised). The cache
 // key is the class's object index and name, never the class pointer alone,
 // so a class unloaded and replaced looks the member up again.
 template <typename T>
