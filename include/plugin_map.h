@@ -230,6 +230,88 @@ namespace PluginMap
     }
 }
 
+// Mass entity helpers a plugin reaches the game's entity manager and signal
+// subsystem world through. Both read by name through the loader, so a plugin
+// does not hard-code an offset, and a build with no row turns off the feature
+// that lists the key.
+//
+//   PluginMap::ResolveMassEntityManager(scanner, self);          // key: PluginMap::MassEntityManagerField
+//   void* manager = PluginMap::MassEntityManagerOf(subsystem);   // null when unresolved
+//
+// The signal subsystem's world is reflected and needs MassSignals_classes.hpp,
+// which only a plugin that uses it includes:
+//   PluginMap::ResolveMassSignalWorld(scanner, self);            // key: PluginMap::MassSignalWorldField()
+//   SDK::UWorld* world = PluginMap::MassSignalWorldOf(subsystem);
+namespace SDK
+{
+    class UMassSignalSubsystem;
+    class UWorld;
+}
+
+namespace PluginMap
+{
+    // A TSharedPtr<T>: the object pointer and the shared reference controller.
+    struct SharedRef
+    {
+        void* Object;
+        void* Controller;
+    };
+    static_assert(sizeof(SharedRef) == 0x10, "a TSharedPtr is two pointers");
+
+    // UMassEntitySubsystem::EntityManager is a TSharedPtr the Game-SDK folds
+    // into padding (not reflected), so it has no SDK name: a native row. The
+    // loader's map holds its row per game build; the offset here and the row
+    // below are CL-127004's, used when the map has none for the running build.
+    inline PluginField<SharedRef> MassEntityManagerField{ { "UMassEntitySubsystem::EntityManager",
+        "UMassEntitySubsystem", "EntityManager", PLUGIN_FIELD_NATIVE, sizeof(SharedRef), 0x38 } };
+
+    inline const PluginFieldCandidate kMassEntityManagerRows[] = {
+        { 127004, 0x38, static_cast<uint32_t>(sizeof(SharedRef)), 0, nullptr },
+    };
+
+    // Asks the loader for MassEntityManagerField. False when it did not resolve.
+    inline bool ResolveMassEntityManager(IPluginHookScanner* scanner, const IPluginSelf* self)
+    {
+        return ResolveField(scanner, self, MassEntityManagerField, kMassEntityManagerRows,
+            static_cast<uint32_t>(sizeof(kMassEntityManagerRows) / sizeof(kMassEntityManagerRows[0])));
+    }
+
+    // The FMassEntityManager* a UMassEntitySubsystem holds, or null when the
+    // subsystem is null or the member did not resolve.
+    inline void* MassEntityManagerOf(const void* subsystem)
+    {
+        const SharedRef* at = MassEntityManagerField.In(subsystem);
+        return at ? at->Object : nullptr;
+    }
+
+    // UMassSignalSubsystem::CachedWorld, the world the subsystem was created
+    // in. A template so this header does not need MassSignals_classes.hpp: the
+    // offset as compiled is taken where a plugin uses it.
+    template <class Subsystem = SDK::UMassSignalSubsystem>
+    PluginField<SDK::UWorld*>& MassSignalWorldField()
+    {
+        static PluginField<SDK::UWorld*> field{ { "UMassSignalSubsystem::CachedWorld", "UMassSignalSubsystem",
+            "CachedWorld", 0, sizeof(SDK::UWorld*), static_cast<int32_t>(offsetof(Subsystem, CachedWorld)) } };
+        return field;
+    }
+
+    // Asks the loader for MassSignalWorldField(). False when it did not resolve.
+    template <class Subsystem = SDK::UMassSignalSubsystem>
+    bool ResolveMassSignalWorld(IPluginHookScanner* scanner, const IPluginSelf* self)
+    {
+        return ResolveField(scanner, self, MassSignalWorldField<Subsystem>());
+    }
+
+    // The world a UMassSignalSubsystem holds, or null when the subsystem is
+    // null or the member did not resolve.
+    template <class Subsystem = SDK::UMassSignalSubsystem>
+    SDK::UWorld* MassSignalWorldOf(const void* subsystem)
+    {
+        const auto* at = MassSignalWorldField<Subsystem>().In(subsystem);
+        return at ? *at : nullptr;
+    }
+}
+
 // A part of a plugin that can be off while the rest runs. `keys` are the names
 // the feature needs, as the plugin passes them to the loader: a Function,
 // Global or Site key (the hookName, without any "<plugin>/"), or a field's

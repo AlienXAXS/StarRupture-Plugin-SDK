@@ -889,6 +889,14 @@ rows themselves, `PluginMap::KeysOf(SR_FIELD rows, SR_SIZE_CHECK rows, "hook key
 cannot leave a key core. `PluginMap::ValueOr(field, object, fallback)` reads a member whose feature
 may be off.
 
+**Mass entity helpers.** `PluginMap::ResolveMassEntityManager(scanner, self)` asks the loader for
+`UMassEntitySubsystem::EntityManager` (a native row, so it has no Game-SDK name) and
+`PluginMap::MassEntityManagerOf(subsystem)` returns the `FMassEntityManager*`, or null when the member
+did not resolve. List `PluginMap::MassEntityManagerField` in the features that use it. Do not read the
+subsystem at a fixed offset. `ResolveMassSignalWorld`, `MassSignalWorldField()` and `MassSignalWorldOf`
+do the same for `UMassSignalSubsystem::CachedWorld`; they are templates so only a plugin that includes
+`MassSignals_classes.hpp` needs the class.
+
 **Resolution order, then what a miss costs.** For a function key (fields: see
 [Game-class fields](#game-class-fields-resolvefield)):
 
