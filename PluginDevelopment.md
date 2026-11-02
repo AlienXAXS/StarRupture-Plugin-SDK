@@ -843,8 +843,28 @@ SDK::UWorld* world = PluginSdkRuntime::GetWorld();     // instead of SDK::UWorld
 | `SR_SIZE_CHECK(Class)` | A checked class size: the request fails on a build where the class's size changed. |
 | `PluginMap::ResolveFields(scan, self, fields...)` | `ResolveField` for each, every one asked even after a failure, so the log lists them all. Sends `PLUGIN_GAME_BUILT_CL` as `builtCL`. True when all resolved. |
 | `PluginVersionMap::Attach(request)`, `PluginVersionMap::ResolveFields(...)` | `plugin_version_map.h`: the same with your generated rows for the key and its `kBuiltCL`. |
-| `PluginSdkRuntime::Init(self->hooks)`, `GetWorld()`, `Globals()` | Points your copy of the SDK's `GObjects` and `FName::AppendString` at the running build's, from `GetSdkGlobals`. `GetWorld()` replaces `SDK::UWorld::GetWorld()`, which reads the compiled `Offsets::GWorld`. |
+| `PluginSdkRuntime::Init(self->hooks)`, `GetWorld()`, `Globals()` | Points your copy of the SDK's `GObjects` and `FName::AppendString` at the running build's, from `GetSdkGlobals`. `GetWorld()` replaces `SDK::UWorld::GetWorld()`: it gives the game viewport's world, not `GWorld` (see [GetWorld](#getworld-the-viewports-world)). Game thread only. |
 | `PluginLazyField<T>{ "Member" }` | A member the plugin can live without: a Blueprint (`_C`) member, which has no SDK offset, or a native member whose feature turns off when it is missing. `In(hooks->ObjectProperties, object)` looks it up by name on first use, checks its size against `sizeof(T)` and caches the offset per class; null when it is not there. Game thread only. |
+
+#### GetWorld: the viewport's world
+
+`PluginSdkRuntime::GetWorld()` returns `UEngine::GameViewport->World`, the world the player sees.
+`SDK::UWorld::GetWorld()` returns the engine's `GWorld` global, and that is not always the same
+world. A plugin that creates a world of its own (MiniMap's sprite capture world is one: a preview
+world the engine is not told about) can leave `GWorld` pointing at it. Every plugin reading `GWorld`
+then sees a world with no game state and no player, and waits for the game world for the rest of the
+session. The viewport's world cannot be such a world, because only the engine's own world context
+puts a world in the viewport. That same context keeps `GWorld`, so on travel and loading both go
+null together, and code that waits for a null world to pass behaves as before.
+
+On the SDK's own game build the two members are read at their compiled offsets. On any other build
+they are looked up by name in the running game's reflection and their size is checked, the way the
+loader's map reads a reflected member (`PluginLazyField`, through `hooks->ObjectProperties`).
+`GetWorld()` falls back to `GWorld` only when there is no engine or no viewport yet (before the
+engine is up, and on a dedicated server, which has no viewport), or when a member is not found.
+
+The loader does the same for its own reads (`SdkGlobals::GetWorld`), and its world-start events pass
+the world that began play, not a global getter's result.
 
 With `PLUGIN_GAME_BUILT_CL` 0 the loader does not know your build, so through `PluginMap::ResolveFields`
 a `PLUGIN_FIELD_NATIVE` member resolves only from a row for the running build, and a checked bitfield
