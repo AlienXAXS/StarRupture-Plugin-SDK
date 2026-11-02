@@ -32,6 +32,7 @@
 #include <cstdint>
 #include <cstring>
 #include <type_traits>
+#include <utility>
 #include <vector>
 
 namespace PluginMap
@@ -244,6 +245,7 @@ namespace PluginMap
 //   SDK::UWorld* world = PluginMap::MassSignalWorldOf(subsystem);
 namespace SDK
 {
+    class UEngine;
     class UMassSignalSubsystem;
     class UWorld;
 }
@@ -368,57 +370,6 @@ namespace PluginMap
     }
 }
 
-// The Game-SDK globals the loader found on the running build, handed to this
-// plugin's own copy of the SDK. Each plugin compiles the SDK itself, so the
-// loader's InitManually does not reach it.
-namespace PluginSdkRuntime
-{
-    // Set by Init; null before, or when the loader had none to give.
-    inline const PluginSdkGlobals*& Globals()
-    {
-        static const PluginSdkGlobals* globals = nullptr;
-        return globals;
-    }
-
-    // Takes the globals and points the SDK's GObjects and FName::AppendString
-    // at them. False when the loader has none to give; the SDK then keeps its
-    // Offsets::, which hold only on the build it was generated for, and the
-    // loader does not run this plugin on any other build.
-    inline bool Init(IPluginHooks* hooks)
-    {
-        const PluginSdkGlobals* globals = hooks && hooks->Engine && hooks->Engine->GetSdkGlobals
-            ? hooks->Engine->GetSdkGlobals() : nullptr;
-        if (!globals || globals->structSize < sizeof(PluginSdkGlobals) || !globals->gobjects || !globals->appendString)
-            return false;
-        SDK::UObject::GObjects.InitManually(reinterpret_cast<void*>(globals->gobjects));
-        SDK::FName::InitManually(reinterpret_cast<void*>(globals->appendString));
-        Globals() = globals;
-        return true;
-    }
-
-    // True on the build the SDK was generated for: no globals from the
-    // loader, or its GObjects and AppendString are where Offsets:: has them.
-    inline bool OnSdkBuild()
-    {
-        const PluginSdkGlobals* globals = Globals();
-        const uintptr_t base = SDK::InSDKUtils::GetImageBase();
-        return !globals || (globals->gobjects == base + SDK::Offsets::GObjects
-            && globals->appendString == base + SDK::Offsets::AppendString);
-    }
-
-    // The current world, in place of SDK::UWorld::GetWorld(), which reads
-    // Offsets::GWorld. On the SDK's own build that getter, as the loader does;
-    // on any other, the engine's GWorld the loader found, or null.
-    template <class World = SDK::UWorld>
-    World* GetWorld()
-    {
-        if (OnSdkBuild())
-            return World::GetWorld();
-        const uintptr_t gworld = Globals()->gworld;
-        return gworld ? *reinterpret_cast<World* const*>(gworld) : nullptr;
-    }
-}
-
 // A member the plugin can live without, found by name through the loader's
 // reflection on first use and cached as an offset per class: a member of a
 // Blueprint (_C) class, which has no SDK offset to compile in, or a native
@@ -461,3 +412,94 @@ struct PluginLazyField
     uint64_t m_className  = 0;
     int32_t  m_offset     = -1;
 };
+
+// The Game-SDK globals the loader found on the running build, handed to this
+// plugin's own copy of the SDK. Each plugin compiles the SDK itself, so the
+// loader's InitManually does not reach it.
+namespace PluginSdkRuntime
+{
+    // Set by Init; null before, or when the loader had none to give.
+    inline const PluginSdkGlobals*& Globals()
+    {
+        static const PluginSdkGlobals* globals = nullptr;
+        return globals;
+    }
+
+    // The loader's reflection reader, set by Init with the globals; GetWorld
+    // reads the engine's viewport through it off the SDK's build.
+    inline const IPluginObjectProperties*& ObjectProperties()
+    {
+        static const IPluginObjectProperties* properties = nullptr;
+        return properties;
+    }
+
+    // Takes the globals and points the SDK's GObjects and FName::AppendString
+    // at them. False when the loader has none to give; the SDK then keeps its
+    // Offsets::, which hold only on the build it was generated for, and the
+    // loader does not run this plugin on any other build.
+    inline bool Init(IPluginHooks* hooks)
+    {
+        const PluginSdkGlobals* globals = hooks && hooks->Engine && hooks->Engine->GetSdkGlobals
+            ? hooks->Engine->GetSdkGlobals() : nullptr;
+        if (!globals || globals->structSize < sizeof(PluginSdkGlobals) || !globals->gobjects || !globals->appendString)
+            return false;
+        SDK::UObject::GObjects.InitManually(reinterpret_cast<void*>(globals->gobjects));
+        SDK::FName::InitManually(reinterpret_cast<void*>(globals->appendString));
+        Globals() = globals;
+        ObjectProperties() = hooks->ObjectProperties;
+        return true;
+    }
+
+    // True on the build the SDK was generated for: no globals from the
+    // loader, or its GObjects and AppendString are where Offsets:: has them.
+    inline bool OnSdkBuild()
+    {
+        const PluginSdkGlobals* globals = Globals();
+        const uintptr_t base = SDK::InSDKUtils::GetImageBase();
+        return !globals || (globals->gobjects == base + SDK::Offsets::GObjects
+            && globals->appendString == base + SDK::Offsets::AppendString);
+    }
+
+    // The current world, in place of SDK::UWorld::GetWorld(): the world of the
+    // game viewport (UEngine::GameViewport->World). Game thread only.
+    //
+    // The engine's GWorld global is not that world. Code that builds a world
+    // of its own (a preview or capture world the engine is not told about)
+    // can leave GWorld pointing at it, while the viewport always shows the
+    // world being played. The viewport's world and GWorld are both kept by
+    // the game's world context, so they go null together on travel.
+    //
+    // On the SDK's own build the members are read as compiled. On any other
+    // they are found by name in the running game's reflection, and their
+    // size checked, the way the loader's map reads a reflected member. GWorld
+    // (Offsets::GWorld, or the one the loader found) only when there is no
+    // engine or no viewport yet (before the engine is up, and on a dedicated
+    // server), or when a member is not found on this build.
+    template <class World = SDK::UWorld, class Engine = SDK::UEngine>
+    World* GetWorld()
+    {
+        Engine* engine = Engine::GetEngine();
+        if (OnSdkBuild())
+        {
+            if (engine && engine->GameViewport)
+                return static_cast<World*>(engine->GameViewport->World);
+            return World::GetWorld();
+        }
+
+        using Viewport = decltype(std::declval<Engine&>().GameViewport);
+        static PluginLazyField<Viewport> s_gameViewport{ "GameViewport" };
+        static PluginLazyField<World*> s_viewportWorld{ "World" };
+        if (const IPluginObjectProperties* properties = ObjectProperties(); engine && properties)
+        {
+            Viewport* viewport = s_gameViewport.In(properties, engine);
+            if (viewport && *viewport)
+            {
+                if (World** world = s_viewportWorld.In(properties, *viewport))
+                    return *world;
+            }
+        }
+        const uintptr_t gworld = Globals()->gworld;
+        return gworld ? *reinterpret_cast<World* const*>(gworld) : nullptr;
+    }
+}
+
