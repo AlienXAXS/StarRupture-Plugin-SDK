@@ -114,10 +114,11 @@ struct PluginFieldSpec
     const char* className;      // the Game-SDK's class name
     const char* member;         // null = a size row for className
     uint32_t    flags;          // PluginFieldFlags
-    uint32_t    size;           // sizeof as compiled
+    uint32_t    size;           // sizeof as compiled; 0 = take the size the game reflects
     int32_t     builtOffset;    // offsetof as compiled; -1 for a bitfield or a size row
     int32_t     offset   = -1;  // -1 = not resolved
     uint8_t     boolMask = 0;
+    uint32_t    resolvedSize = 0; // the size the loader reports for the member on the running build; 0 = not resolved
 };
 
 template <typename T>
@@ -162,6 +163,11 @@ struct PluginBitField : PluginFieldSpec
 // game build (the loader's map, or the plugin's own).
 #define SR_BITFIELD(Class, Member) \
     PluginBitField{ { #Class "::" #Member, #Class, #Member, PLUGIN_FIELD_BITFIELD, 1, -1 } }
+// A member whose size is not the same on every build the plugin runs on: the
+// loader accepts whatever size the game reflects and reports it in
+// `resolvedSize`. Read it by that size (a float on one build, a double on the
+// next), and treat a size the plugin does not handle as the member not there.
+#define SR_FIELD_ANY_SIZE(Class, Member, flags)     PluginFieldSpec{ #Class "::" #Member, #Class, #Member, (flags), 0,                      static_cast<int32_t>(offsetof(SDK::Class, Member)) }
 // The size of an SDK class, checked on the running build (PLUGIN_FIELD_CHECK).
 #define SR_SIZE_CHECK(Class) \
     PluginFieldSpec{ #Class, #Class, nullptr, PLUGIN_FIELD_CHECK, sizeof(SDK::Class), -1 }
@@ -189,8 +195,9 @@ namespace PluginMap
         PluginFieldResult result{};
         if (!scanner->ResolveField(self, &request, &result))
             return false;
-        field.offset   = result.offset;
-        field.boolMask = result.boolMask;
+        field.offset       = result.offset;
+        field.boolMask     = result.boolMask;
+        field.resolvedSize = result.size;
         return true;
     }
 

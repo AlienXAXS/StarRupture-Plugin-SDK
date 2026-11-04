@@ -718,7 +718,10 @@ if (scan->ResolveField(self, &req, &field))
 
 - **Reflected** (no flag): the offset comes from the game's reflection data, found by class (short
   name, or `/Script/<Module>.<Name>` when two modules share it) and member, in the class or its
-  supers. The member's size must equal `size`. A row for the running changelist must agree with
+  supers. The member's size must equal `size`, unless `size` is 0: the loader then accepts the size
+  the game reflects and returns it in `PluginFieldResult::size`. Use that for a member whose type
+  differs between game builds (a float on one, a double on the next), and read it by the returned
+  size, treating a size you do not handle as the member being absent. A row for the running changelist must agree with
   reflection, or the request fails; with no row, reflection alone answers.
 - **`PLUGIN_FIELD_NATIVE`**: a member reflection does not describe. The row for the running
   changelist answers, or `builtOffset` on `builtCL`. On any other build the request fails. The
@@ -841,6 +844,7 @@ SDK::UWorld* world = PluginSdkRuntime::GetWorld();     // instead of SDK::UWorld
 | `PluginMap::Request(key, pattern, kind, ...)` | The request the helpers send, not sent, for adding `candidates` before you call `Resolve` yourself. |
 | `SR_FIELD(T, Class, Member, flags)` | A `PluginField<T>`: `In(object)` gives the member or null. `flags` takes `PLUGIN_FIELD_NATIVE` and `PLUGIN_FIELD_CHECK`. |
 | `SR_BITFIELD(Class, Member)` | A `PluginBitField`: `Get(object)` and `Set(object, value)`. |
+| `SR_FIELD_ANY_SIZE(Class, Member, flags)` | A `PluginFieldSpec` requested with size 0, for a member whose size differs between builds. After the request, `resolvedSize` holds the size the loader reports on the running build and `offset` where it is. |
 | `SR_SIZE_CHECK(Class)` | A checked class size: the request fails on a build where the class's size changed. |
 | `PluginMap::ResolveFields(scan, self, fields...)` | `ResolveField` for each, every one asked even after a failure, so the log lists them all. Sends `PLUGIN_GAME_BUILT_CL` as `builtCL`. True when all resolved. |
 | `PluginVersionMap::Attach(request)`, `PluginVersionMap::ResolveFields(...)` | `plugin_version_map.h`: the same with your generated rows for the key and its `kBuiltCL`. |
