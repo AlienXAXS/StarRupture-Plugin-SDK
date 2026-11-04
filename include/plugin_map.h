@@ -114,7 +114,7 @@ struct PluginFieldSpec
     const char* className;      // the Game-SDK's class name
     const char* member;         // null = a size row for className
     uint32_t    flags;          // PluginFieldFlags
-    uint32_t    size;           // sizeof as compiled; 0 = take the size the game reflects
+    uint32_t    size;           // sizeof as compiled; 0 with PLUGIN_FIELD_ANY_SIZE = take the size the game reflects
     int32_t     builtOffset;    // offsetof as compiled; -1 for a bitfield or a size row
     int32_t     offset   = -1;  // -1 = not resolved
     uint8_t     boolMask = 0;
@@ -167,7 +167,8 @@ struct PluginBitField : PluginFieldSpec
 // loader accepts whatever size the game reflects and reports it in
 // `resolvedSize`. Read it by that size (a float on one build, a double on the
 // next), and treat a size the plugin does not handle as the member not there.
-#define SR_FIELD_ANY_SIZE(Class, Member, flags)     PluginFieldSpec{ #Class "::" #Member, #Class, #Member, (flags), 0,                      static_cast<int32_t>(offsetof(SDK::Class, Member)) }
+// A reflected member only: `flags` must not carry NATIVE, CHECK or BITFIELD.
+#define SR_FIELD_ANY_SIZE(Class, Member, flags)     PluginFieldSpec{ #Class "::" #Member, #Class, #Member, (flags) | PLUGIN_FIELD_ANY_SIZE, 0,                      static_cast<int32_t>(offsetof(SDK::Class, Member)) }
 // The size of an SDK class, checked on the running build (PLUGIN_FIELD_CHECK).
 #define SR_SIZE_CHECK(Class) \
     PluginFieldSpec{ #Class, #Class, nullptr, PLUGIN_FIELD_CHECK, sizeof(SDK::Class), -1 }
