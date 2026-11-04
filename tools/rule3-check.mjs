@@ -46,7 +46,7 @@ export const EXIT_USAGE = 2;
 export const EXIT_VIOLATION = 3;
 
 const SOURCE_EXT = /\.(cpp|cc|cxx|c|h|hpp|hxx|inl)$/i;
-const SKIP_DIRS = new Set(['.git', 'build', 'obj', 'x64', 'node_modules', 'StarRupture SDK', 'StarRupture-ImGui', 'Tests', 'tests', 'out', 'bin', '.vs']);
+const SKIP_DIRS = new Set(['.git', 'build', 'obj', 'x64', 'node_modules', 'StarRupture SDK', 'game-sdk', 'plugin-sdk', 'StarRupture-ImGui', 'Tests', 'tests', 'out', 'bin', '.vs']);
 
 const NOT_NAMES = new Set(['return', 'new', 'delete', 'if', 'else', 'for', 'while', 'switch', 'case', 'const', 'static', 'constexpr', 'auto', 'sizeof', 'alignof', 'offsetof', 'typedef', 'using', 'operator', 'throw', 'do', 'goto', 'break', 'continue', 'template', 'typename', 'class', 'struct', 'enum', 'union', 'namespace', 'public', 'private', 'protected', 'virtual', 'override', 'final', 'noexcept', 'this', 'true', 'false', 'nullptr', 'default', 'volatile', 'inline', 'mutable', 'extern', 'friend', 'explicit', 'else', 'and', 'or', 'not', 'co_return', 'co_await', 'decltype']);
 const QUAL = new Set(['const', 'static', 'constexpr', 'volatile', 'inline', 'mutable', 'struct', 'class', 'enum', 'typename', 'extern', 'thread_local', 'register']);

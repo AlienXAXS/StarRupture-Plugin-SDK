@@ -313,7 +313,8 @@ The reusable workflow [.github/workflows/plugin-release.yml](.github/workflows/p
    - `MyPlugin.dll` — the compiled plugin
    - `MyPlugin.json` — the sidecar pointing at the `latest/download` manifest URL
    - `MyPlugin.pdb` — PDB if present
-4. **Create GitHub Release** — three assets are uploaded: the bare DLL, the manifest JSON, and the ZIP. The ZIP is the intended install package for users.
+4. **Create GitHub Release** — three assets are uploaded: the bare DLL, the manifest JSON, and the ZIP. The ZIP is the intended install package for users. With `server_build: true` the Server variant gets the same three assets.
+5. **Nexus Mods** (only when `nexus_mod_id` is set) — the ZIP is uploaded, the page Version field and changelog entry are set from `UPDATE_NOTES.txt`, and `nexus/description.bbcode` replaces the page description when the file exists.
 
 A user who installs via the ZIP gets both the DLL **and** its sidecar. From that point on the modloader handles all future updates silently.
 
@@ -360,7 +361,7 @@ ManifestUrl=       ; override the compiled-in central manifest URL (optional)
 
 To opt into auto-updates for your plugin:
 
-1. Use the reusable workflow: add `.github/workflows/release.yml` to your plugin repo that calls `AlienXAXS/StarRupture-Plugin-SDK/.github/workflows/plugin-release.yml@main`.
+1. Use the reusable workflow: add `.github/workflows/release.yml` to your plugin repo that calls `AlienXAXS/StarRupture-Plugin-SDK/.github/workflows/plugin-release.yml` pinned to an SDK release tag (copy `templates/release.yml`). Tick `dry_run` to build and package without publishing.
 2. The workflow generates and publishes the manifest and sidecar automatically — no manual steps.
 3. Tell users to install from the ZIP. The sidecar inside it wires up future updates automatically.
 
