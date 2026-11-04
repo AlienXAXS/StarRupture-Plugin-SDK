@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+
+  <!-- ============================================================
+       PLUGIN_GAME_BUILT_CL
+       The game build (CL) the plugin's Game-SDK was generated from,
+       stored in PluginInfo::gameBuiltCL by plugin_interface.h. A
+       plugin that sets PLUGIN_MAP_MIGRATED needs it.
+
+       Taken, in order, from:
+         1. PluginGameBuiltCL: /p:PluginGameBuiltCL=<CL> on the build,
+            or a PluginGameBuiltCL property the plugin sets before it
+            imports this file (its Shared.props or project);
+         2. the build_cl.txt beside the Game-SDK's Client\ or Server\
+            folder (GameSDKRoot, else the StarRupture SDK folder);
+         3. nothing: no define, and the plugin declares build 0.
+
+       Import it from the plugin's Shared.props, after GameSDKRoot
+       and PluginSDKInclude are set:
+         <Import Project="$(PluginSDKInclude)\..\PluginGameBuild.props"
+                 Condition="Exists('$(PluginSDKInclude)\..\PluginGameBuild.props')" />
+       ============================================================ -->
+  <PropertyGroup>
+    <StarRuptureGameSDKRoot Condition="'$(GameSDKRoot)' != ''">$(GameSDKRoot)</StarRuptureGameSDKRoot>
+    <StarRuptureGameSDKRoot Condition="'$(GameSDKRoot)' == ''">$(SolutionDir)StarRupture SDK</StarRuptureGameSDKRoot>
+  </PropertyGroup>
+  <PropertyGroup Condition="$(Configuration.Contains('Client'))">
+    <StarRuptureBuildCLFile>$(StarRuptureGameSDKRoot)\Client\build_cl.txt</StarRuptureBuildCLFile>
+  </PropertyGroup>
+  <PropertyGroup Condition="$(Configuration.Contains('Server'))">
+    <StarRuptureBuildCLFile>$(StarRuptureGameSDKRoot)\Server\build_cl.txt</StarRuptureBuildCLFile>
+  </PropertyGroup>
+  <PropertyGroup>
+    <StarRuptureGameBuiltCL>$(PluginGameBuiltCL.Trim())</StarRuptureGameBuiltCL>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(StarRuptureGameBuiltCL)' == '' And '$(StarRuptureBuildCLFile)' != '' And Exists('$(StarRuptureBuildCLFile)')">
+    <StarRuptureGameBuiltCL>$([System.IO.File]::ReadAllText('$(StarRuptureBuildCLFile)').Trim())</StarRuptureGameBuiltCL>
+  </PropertyGroup>
+  <ItemDefinitionGroup Condition="'$(StarRuptureGameBuiltCL)' != ''">
+    <ClCompile>
+      <PreprocessorDefinitions>PLUGIN_GAME_BUILT_CL=$(StarRuptureGameBuiltCL)u;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+  </ItemDefinitionGroup>
+
+</Project>

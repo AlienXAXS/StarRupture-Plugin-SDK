@@ -65,6 +65,9 @@
     </ClCompile>
   </ItemDefinitionGroup>
 
+  <!-- PLUGIN_GAME_BUILT_CL: see PluginGameBuild.props. -->
+  <Import Project="$(MSBuildThisFileDirectory)PluginGameBuild.props" />
+
   <!-- ============================================================
        AUTOUPDATE_MANIFEST_URL
        Injected by CI per variant via /p:AutoUpdateManifestUrl="https://...".
