@@ -231,9 +231,53 @@ test('a stride stepped by ElementAt with the SR_SIZE spec is covered', () => {
 test('a stride stepped by index * spec.resolvedSize is covered', () => {
   const r = run({ 'a.cpp': [
     'inline auto Item_Size = SR_SIZE(FCrItem);',
-    'size_t g(SDK::TArray<SDK::FCrItem>& arr, int i) { return i * Item_Size.resolvedSize; }',
+    'const uint8_t* g(SDK::TArray<SDK::FCrItem>& arr, int i) {',
+    '  return reinterpret_cast<const uint8_t*>(arr.GetData()) + i * Item_Size.resolvedSize;',
+    '}',
+    'size_t h(const uint8_t* data, int i) { return i * Item_Size.resolvedSize; }',
   ].join('\n') });
   assert.deepEqual(r.findings, []);
+});
+
+test('a typed arr[i] next to an ElementAt in the same file is still a stride', () => {
+  const r = run({ 'a.cpp': [
+    'inline auto Item_Size = SR_SIZE(FCrItem);',
+    'const uint8_t* a(SDK::TArray<SDK::FCrItem>& live) { return PluginMap::ElementAt(live, 1, Item_Size); }',
+    'int b(SDK::TArray<SDK::FCrItem>& arr, int i) { auto& x = arr[i]; return &x != nullptr; }',
+    'void c(SDK::TArray<SDK::FCrItem>& more, int i) { PluginMap::ElementAt(more, 0, Item_Size); auto* p = more.GetData() + i; }',
+  ].join('\n') });
+  assert.deepEqual(kinds(r), ['stride', 'stride']);
+  assert.deepEqual(r.findings.map((x) => x.line), [3, 4]);
+});
+
+test('a TArray argument passed inline to ElementAt is not a stride', () => {
+  const r = run({ 'a.cpp': [
+    'inline auto Item_Size = SR_SIZE(FCrItem);',
+    'const uint8_t* f(void* raw) { return PluginMap::ElementAt(*static_cast<SDK::TArray<SDK::FCrItem>*>(raw), 2, Item_Size); }',
+    'const uint8_t* g(const SDK::TArray<SDK::FCrItem>& arr) { return arr.Num() ? PluginMap::ElementAt(arr, 0, Item_Size) : nullptr; }',
+  ].join('\n') });
+  assert.deepEqual(r.findings, []);
+});
+
+test('a TArray pointer that is null-tested, counted and stepped by ElementAt is not a stride', () => {
+  const r = run({ 'a.cpp': [
+    'inline auto Item_Size = SR_SIZE(FCrItem);',
+    'const uint8_t* f(SDK::TArray<SDK::FCrItem>* items) {',
+    '  if (!items || items->Num() == 0) return nullptr;',
+    '  return PluginMap::ElementAt(*items, 0, Item_Size);',
+    '}',
+  ].join('\n') });
+  assert.deepEqual(r.findings, []);
+});
+
+test('aliasing, iterating or taking GetData() of a TArray stays a stride beside an ElementAt', () => {
+  const r = run({ 'a.cpp': [
+    'inline auto Item_Size = SR_SIZE(FCrItem);',
+    'void a(SDK::TArray<SDK::FCrItem>& x) { PluginMap::ElementAt(x, 0, Item_Size); auto& y = x; }',
+    'void b(SDK::TArray<SDK::FCrItem>& x) { PluginMap::ElementAt(x, 0, Item_Size); for (auto& e : x) {} }',
+    'void c(SDK::TArray<SDK::FCrItem>& x) { PluginMap::ElementAt(x, 0, Item_Size); auto* p = x.GetData(); }',
+  ].join('\n') });
+  assert.deepEqual(kinds(r), ['stride', 'stride', 'stride']);
 });
 
 test('mentioning SR_SIZE does not excuse a sizeof or a stride in a file that never steps by it', () => {

@@ -885,8 +885,10 @@ for (int32_t i = 0; i < skills.Num(); ++i)
 ```
 
 Typed `TArray<SDK::FStruct>` indexing in the same code is compiled with the old size, so do not mix
-it with a live size. The [rule 3 check](#rule-3-check----no-direct-reads-of-game-members) is
-unchanged: it still asks for `SR_SIZE_CHECK` for a struct the code steps through as a typed array.
+it with a live size. The [rule 3 check](#rule-3-check----no-direct-reads-of-game-members) judges
+each site: a `TArray<SDK::FStruct>` variable that is only passed to `PluginMap::ElementAt`
+(with the `SR_SIZE` spec) or asked `Num()` is fine, but any other use of it (`arr[i]`, `GetData() + i`)
+still asks for `SR_SIZE_CHECK`, however many other places in the file step by the live size.
 
 ##### Game enums by name
 

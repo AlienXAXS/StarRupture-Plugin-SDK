@@ -16,9 +16,12 @@
 //   offset    pointer arithmetic with a hex constant, a hard address, a named offset constant
 // sizeof, stride and byvalue of a struct are not flagged when the plugin lists
 // SR_SIZE_CHECK(thatStruct): the loader checks the size on the running build.
-// A stride is also not flagged in a file that steps by the live size of its
-// struct: `auto spec = SR_SIZE(thatStruct)` used as PluginMap::ElementAt(..., spec)
-// or index * spec.resolvedSize. sizeof of it stays flagged.
+// A stride is also not flagged at a site that steps by the live size of its
+// struct (`auto spec = SR_SIZE(thatStruct)`): the array variable is only ever
+// passed to PluginMap::ElementAt(..., spec), asked its Num(), or read in a statement
+// that multiplies by spec.resolvedSize. Any other use of it (arr[i], GetData() + i),
+// or a mention with no such use, stays flagged wherever else the file steps live.
+// sizeof of the struct stays flagged.
 //
 // How it knows what is a game type: it indexes the Game-SDK's Dumper-7 headers
 // (members with their types, methods with their return types, base classes,
@@ -267,7 +270,6 @@ class Context {
     this.memberCache = new Map();
     this.sizeChecked = new Set();
     this.liveSized = new Map(); // struct -> names of its SR_SIZE specs
-    this.liveUses = new Map(); // file -> names passed to ElementAt or read through .resolvedSize
     this.localTypes = new Set(); // structs and classes the plugin declares itself
     this.globals = new Map(); // name -> type | null (ambiguous)
     this.funcs = new Map();
@@ -517,12 +519,77 @@ function scanFile(ctx, file, code, collect) {
     return true;
   }
 
+  // Token indexes of the names declared with a container type (the token after
+  // `TArray<...>&`), so a second declaration of the same name is not a use.
+  let declNames = null;
+  const isDeclName = (k) => {
+    if (!declNames) {
+      declNames = new Set();
+      for (let p = 0; p < T.length; p++) {
+        if (CONTAINERS.has(T[p]) && T[p + 1] === '<' && T[p - 1] !== '.' && T[p - 1] !== '->') {
+          const r = parseType(T, p);
+          if (r && CONTAINERS.has(r.type.n)) declNames.add(r.next);
+        }
+      }
+    }
+    return declNames.has(k);
+  };
+
+  // Whether token k sits inside the arguments of a PluginMap::ElementAt call that
+  // passes one of `specs`.
+  function inLiveElementAt(k, specs) {
+    for (let p = k - 1, depth = 0; p >= 0; p--) {
+      if (T[p] === ')') depth++;
+      else if (T[p] === '(') {
+        if (depth > 0) { depth--; continue; }
+        if (T[p - 1] === 'ElementAt' && close[p] > k) {
+          for (let q = p + 1; q < close[p]; q++) if (specs.has(T[q])) return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  // Whether the statement around token k reads `<spec>.resolvedSize`.
+  function inResolvedSizeStatement(k, specs) {
+    let a = k;
+    while (a > 0 && !['{', '}', ';'].includes(T[a - 1])) a--;
+    for (let q = a; q < T.length && !['{', '}', ';'].includes(T[q]); q++) {
+      if (T[q] === 'resolvedSize' && T[q - 1] === '.' && specs.has(T[q - 2])) return true;
+    }
+    return false;
+  }
+
+  // A TArray mention of a struct with an SR_SIZE spec is live when it is itself an
+  // argument of such an ElementAt, or declares a variable that is stepped by that spec
+  // at least once and never indexed (arr[i]), iterated, aliased or read through a
+  // pointer to its elements (GetData(), begin()) outside such a step. Num(), null
+  // tests and passing it on are not strides.
+  function steppedLive(i, r, struct) {
+    const specs = ctx.liveSized.get(struct);
+    if (!specs) return false;
+    if (inLiveElementAt(i, specs)) return true;
+    const name = T[r.next];
+    if (!isIdent(name) || NOT_NAMES.has(name)) return false;
+    let live = 0;
+    for (let k = 0; k < T.length; k++) {
+      if (T[k] !== name || k === r.next || isDeclName(k) || ['.', '->', '::'].includes(T[k - 1])) continue;
+      const indexed = T[k + 1] === '[' || (T[k + 1] === ')' && T[k + 2] === '[' && T[k - 1] === '*');
+      if (!indexed && (inLiveElementAt(k, specs) || inResolvedSizeStatement(k, specs))) { live++; continue; }
+      const member = (T[k + 1] === '.' || T[k + 1] === '->') && T[k + 2];
+      const alias = (T[k + 1] === ';' || T[k + 1] === ',') && (T[k - 1] === '=' || (T[k - 1] === '*' && T[k - 2] === '='));
+      const iterated = T[k - 1] === ':' && T[k + 1] === ')';
+      if (indexed || alias || iterated || (member && member !== 'Num' && member !== 'IsValidIndex')) return false;
+    }
+    return live > 0;
+  }
+
   function checkContainer(i) {
     const r = parseType(T, i);
     if (!r || !CONTAINERS.has(r.type.n)) return;
     const walk = (t) => {
       for (const a of t.a) {
-        if (!a.ind && ctx.isGameStruct(a.n)) report('stride', i, `${t.n}<${a.n}>`, { struct: a.n });
+        if (!a.ind && ctx.isGameStruct(a.n) && !steppedLive(i, r, a.n)) report('stride', i, `${t.n}<${a.n}>`, { struct: a.n });
         walk(a);
       }
     };
@@ -610,16 +677,6 @@ function scanFile(ctx, file, code, collect) {
         ctx.liveSized.get(T[p]).add(T[i - 2]);
       }
     }
-    if (collect && (t === 'ElementAt' || t === 'resolvedSize')) {
-      const uses = ctx.liveUses.get(file) ?? new Set();
-      ctx.liveUses.set(file, uses);
-      if (t === 'resolvedSize') { if (T[i - 1] === '.' && isIdent(T[i - 2])) uses.add(T[i - 2]); }
-      else if (T[i + 1] === '(') {
-        for (let k = i + 2, depth = 1; k < T.length && depth > 0; k++) {
-          if (T[k] === '(') depth++; else if (T[k] === ')') depth--; else if (isIdent(T[k])) uses.add(T[k]);
-        }
-      }
-    }
 
     if (t === 'SR_SIZE_CHECK' && T[i + 1] === '(') {
       let p = i + 2;
@@ -705,10 +762,7 @@ export function check({ plugin, sdkDir, sources, allowFile, mode = 'auto', index
     all.push(...r.findings);
     unresolved += r.unresolved;
   }
-  // A stride of a struct with an SR_SIZE spec is covered only in a file that steps
-  // by that spec: PluginMap::ElementAt(..., spec) or index * spec.resolvedSize.
-  const stepsLive = (f) => f.kind === 'stride' && [...(ctx.liveSized.get(f.struct) ?? [])].some((n) => ctx.liveUses.get(f.file)?.has(n));
-  const covered = all.filter((f) => (['sizeof', 'stride', 'byvalue'].includes(f.kind) && ctx.sizeChecked.has(f.struct)) || stepsLive(f));
+  const covered = all.filter((f) => ['sizeof', 'stride', 'byvalue'].includes(f.kind) && ctx.sizeChecked.has(f.struct));
   const flagged = all.filter((f) => !covered.includes(f));
   const { kept, allowed, stale } = applyAllow(flagged, allow, plugin);
   const enforced = mode === 'enforce' || (mode === 'auto' && migrated);
