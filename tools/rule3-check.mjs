@@ -16,6 +16,9 @@
 //   offset    pointer arithmetic with a hex constant, a hard address, a named offset constant
 // sizeof, stride and byvalue of a struct are not flagged when the plugin lists
 // SR_SIZE_CHECK(thatStruct): the loader checks the size on the running build.
+// A stride is also not flagged in a file that steps by the live size of its
+// struct: `auto spec = SR_SIZE(thatStruct)` used as PluginMap::ElementAt(..., spec)
+// or index * spec.resolvedSize. sizeof of it stays flagged.
 //
 // How it knows what is a game type: it indexes the Game-SDK's Dumper-7 headers
 // (members with their types, methods with their return types, base classes,
@@ -263,6 +266,8 @@ class Context {
     this.plugin = plugin;
     this.memberCache = new Map();
     this.sizeChecked = new Set();
+    this.liveSized = new Map(); // struct -> names of its SR_SIZE specs
+    this.liveUses = new Map(); // file -> names passed to ElementAt or read through .resolvedSize
     this.localTypes = new Set(); // structs and classes the plugin declares itself
     this.globals = new Map(); // name -> type | null (ambiguous)
     this.funcs = new Map();
@@ -597,6 +602,25 @@ function scanFile(ctx, file, code, collect) {
     } else if (t === '}') { if (scopes.length > 1) scopes.pop(); }
     else if (t === ';') lastParen = null;
 
+    if (collect && t === 'SR_SIZE' && T[i + 1] === '(' && T[i - 1] === '=' && isIdent(T[i - 2])) {
+      let p = i + 2;
+      if (T[p] === 'SDK' && T[p + 1] === '::') p += 2;
+      if (isIdent(T[p])) {
+        if (!ctx.liveSized.has(T[p])) ctx.liveSized.set(T[p], new Set());
+        ctx.liveSized.get(T[p]).add(T[i - 2]);
+      }
+    }
+    if (collect && (t === 'ElementAt' || t === 'resolvedSize')) {
+      const uses = ctx.liveUses.get(file) ?? new Set();
+      ctx.liveUses.set(file, uses);
+      if (t === 'resolvedSize') { if (T[i - 1] === '.' && isIdent(T[i - 2])) uses.add(T[i - 2]); }
+      else if (T[i + 1] === '(') {
+        for (let k = i + 2, depth = 1; k < T.length && depth > 0; k++) {
+          if (T[k] === '(') depth++; else if (T[k] === ')') depth--; else if (isIdent(T[k])) uses.add(T[k]);
+        }
+      }
+    }
+
     if (t === 'SR_SIZE_CHECK' && T[i + 1] === '(') {
       let p = i + 2;
       if (T[p] === 'SDK' && T[p + 1] === '::') p += 2;
@@ -681,7 +705,10 @@ export function check({ plugin, sdkDir, sources, allowFile, mode = 'auto', index
     all.push(...r.findings);
     unresolved += r.unresolved;
   }
-  const covered = all.filter((f) => ['sizeof', 'stride', 'byvalue'].includes(f.kind) && ctx.sizeChecked.has(f.struct));
+  // A stride of a struct with an SR_SIZE spec is covered only in a file that steps
+  // by that spec: PluginMap::ElementAt(..., spec) or index * spec.resolvedSize.
+  const stepsLive = (f) => f.kind === 'stride' && [...(ctx.liveSized.get(f.struct) ?? [])].some((n) => ctx.liveUses.get(f.file)?.has(n));
+  const covered = all.filter((f) => (['sizeof', 'stride', 'byvalue'].includes(f.kind) && ctx.sizeChecked.has(f.struct)) || stepsLive(f));
   const flagged = all.filter((f) => !covered.includes(f));
   const { kept, allowed, stale } = applyAllow(flagged, allow, plugin);
   const enforced = mode === 'enforce' || (mode === 'auto' && migrated);

@@ -219,3 +219,28 @@ test('a clean plugin reports clean and passes under enforce', () => {
     f.done();
   }
 });
+
+test('a stride stepped by ElementAt with the SR_SIZE spec is covered', () => {
+  const r = run({ 'a.cpp': [
+    'inline auto Item_Size = SR_SIZE(FCrItem);',
+    'const uint8_t* f(SDK::TArray<SDK::FCrItem>& arr) { return PluginMap::ElementAt(arr, 1, Fields::Item_Size); }',
+  ].join('\n') });
+  assert.deepEqual(r.findings, []);
+});
+
+test('a stride stepped by index * spec.resolvedSize is covered', () => {
+  const r = run({ 'a.cpp': [
+    'inline auto Item_Size = SR_SIZE(FCrItem);',
+    'size_t g(SDK::TArray<SDK::FCrItem>& arr, int i) { return i * Item_Size.resolvedSize; }',
+  ].join('\n') });
+  assert.deepEqual(r.findings, []);
+});
+
+test('mentioning SR_SIZE does not excuse a sizeof or a stride in a file that never steps by it', () => {
+  const r = run({
+    'a.cpp': 'inline auto Item_Size = SR_SIZE(FCrItem);\nsize_t n = sizeof(SDK::FCrItem);\n',
+    'b.cpp': 'void h(SDK::TArray<SDK::FCrItem>& arr) { auto n = arr.Num() * sizeof(SDK::FCrItem); }\n',
+    'c.cpp': 'void k(SDK::TArray<SDK::FCrItem>& arr) { auto p = PluginMap::ElementAt(arr, 0, Other_Size); }\n',
+  });
+  assert.deepEqual(kinds(r).sort(), ['sizeof', 'sizeof', 'stride', 'stride']);
+});
