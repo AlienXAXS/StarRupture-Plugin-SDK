@@ -16,12 +16,10 @@
     { "plugin": "BetterCheats", "file": "BetterCheats/machine_power.cpp", "kind": "offset", "what": "entityManager ) + 0x120", "reason": "FMassEntityManager::ConstSharedFragmentsContainer, a MassEntity engine class, kept compiled on purpose" },
     { "plugin": "BetterCheats", "file": "BetterCheats/machine_power.cpp", "kind": "offset", "what": "sharedMemory ) + 0x08", "reason": "FStructSharedMemory payload (the shared struct's data follows its UScriptStruct*): a MassEntity engine layout, kept compiled on purpose. A field request cannot name it: the loader refuses a row past the end of the class's 0x8 bytes" },
     { "plugin": "Compass", "file": "src/compass/compass_textures.h", "kind": "offset", "reason": "UObject flags and index, FUObjectItem and UStreamableRenderAsset/UTexture flags: core engine layout, kept compiled on purpose" },
-    { "plugin": "ProductionViewer", "file": "ProductionViewer/Plugin Core/Signatures/plugin_signatures.h", "kind": "offset", "reason": "byte distances to a call inside a matched code pattern (a code-shape check), not game member offsets" },
     { "plugin": "ProductionViewer", "file": "ProductionViewer/Production Viewer/production_basecore.cpp", "kind": "offset", "reason": "TSharedPtr reference controller strong and weak counts: engine layout, kept compiled on purpose" },
     { "plugin": "RuptureTimer", "file": "src/debug/object_dumper.cpp", "kind": "offset", "what": "kOff_FProperty_Offset", "reason": "FProperty layout inside the object dumper: core engine layout, kept compiled on purpose" },
     { "plugin": "WaveOptimiser", "file": "src/wave_optimiser_signatures.h", "kind": "offset", "what": "GetSubsystemMassEntity_CallOffset", "reason": "byte distance to a call inside a matched code pattern (a code-shape check), not a game member offset" },
     { "plugin": "CameraControls", "file": "src/cameracontrols_fields.h", "kind": "offset", "what": "kOriginOffset", "reason": "ULocalPlayer::Origin, an Engine class member that is not a UPROPERTY, kept compiled on purpose" },
-    { "plugin": "CameraControls", "file": "src/cameracontrols_fields.h", "kind": "offset", "what": "kSizeOffset", "reason": "ULocalPlayer::Size, an Engine class member that is not a UPROPERTY, kept compiled on purpose" },
-    { "plugin": "CameraControls", "file": "src/control_probe.cpp", "kind": "offset", "what": "kBitsOffset", "reason": "APlayerController bitfield byte, an Engine class member that is not a UPROPERTY, kept compiled on purpose" }
+    { "plugin": "CameraControls", "file": "src/cameracontrols_fields.h", "kind": "offset", "what": "kSizeOffset", "reason": "ULocalPlayer::Size, an Engine class member that is not a UPROPERTY, kept compiled on purpose" }
   ]
 }
