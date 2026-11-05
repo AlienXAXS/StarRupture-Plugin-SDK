@@ -850,10 +850,63 @@ SDK::UWorld* world = PluginSdkRuntime::GetWorld();     // instead of SDK::UWorld
 | `SR_BITFIELD(Class, Member)` | A `PluginBitField`: `Get(object)` and `Set(object, value)`. |
 | `SR_FIELD_ANY_SIZE(Class, Member, flags)` | A `PluginFieldSpec` requested with `PLUGIN_FIELD_ANY_SIZE` (size 0), for a reflected member whose size differs between builds. After the request, `resolvedSize` holds the size the loader reports on the running build and `offset` where it is. |
 | `SR_SIZE_CHECK(Class)` | A checked class size: the request fails on a build where the class's size changed. |
+| `SR_SIZE(Class)` | An unchecked class size: `resolvedSize` holds the size the game reflects on the running build. Step through an array with it using `PluginMap::ElementAt` (see [Struct sizes: live or checked](#struct-sizes-live-or-checked)). 0 = not resolved. |
+| `PluginMap::ElementAt(array, index, size)` | The address of element `index` of a game `TArray` (or, with `ElementAt(data, count, index, size)`, of a buffer), stepped by the `SR_SIZE` row's `resolvedSize`, not a `sizeof`. Null when the array is empty, `index` is out of range or the size did not resolve. |
+| `PluginMap::EnumValue(enumName, entry, value)` | A game enum entry's number, read by name from the running game's `UEnum`: `Found` (written to `value`), `EntryMissing` or `EnumMissing`. Game thread only; look it up once and keep it. |
 | `PluginMap::ResolveFields(scan, self, fields...)` | `ResolveField` for each, every one asked even after a failure, so the log lists them all. Sends `PLUGIN_GAME_BUILT_CL` as `builtCL`. True when all resolved. |
 | `PluginVersionMap::Attach(request)`, `PluginVersionMap::ResolveFields(...)` | `plugin_version_map.h`: the same with your generated rows for the key and its `kBuiltCL`. |
 | `PluginSdkRuntime::Init(self->hooks)`, `GetWorld()`, `Globals()` | Points your copy of the SDK's `GObjects` and `FName::AppendString` at the running build's, from `GetSdkGlobals`. `GetWorld()` replaces `SDK::UWorld::GetWorld()`: it gives the game viewport's world, not `GWorld` (see [GetWorld](#getworld-the-viewports-world)). Game thread only. |
 | `PluginLazyField<T>{ "Member" }` | A member the plugin can live without: a Blueprint (`_C`) member, which has no SDK offset, or a native member whose feature turns off when it is missing. `In(hooks->ObjectProperties, object)` looks it up by name on first use, checks its size against `sizeof(T)` and caches the offset per class; null when it is not there. Game thread only. |
+
+#### Struct sizes: live or checked
+
+A struct's size on a game build is whatever the game's reflection says, so the loader can answer
+it for any build. What a plugin does with the size decides which row to ask for.
+
+- **Only stepping through an array** of the struct, reading each element through resolved member
+  offsets: use `SR_SIZE(FStruct)` and `PluginMap::ElementAt`. The size is the running build's, so a
+  build that adds a member to the struct does not turn the plugin off, and a plugin that never
+  indexes with `sizeof` cannot step into the wrong bytes.
+- **Anything that bakes the compiled layout into code**: use `SR_SIZE_CHECK(FStruct)`. That is a
+  copy of the struct by value, a `ProcessEvent` parameter block or return value, a buffer you hand
+  to a native function to fill, and a `TMap` or `TArray` of the struct that the compiled code
+  indexes. The loader cannot change compiled code, so the request fails on a build where the size
+  moved, and the feature turns off instead of reading the wrong bytes.
+
+```cpp
+static auto g_skillSize = SR_SIZE(FCrSkillData);        // stepped through: the live size
+static auto g_paramsSize = SR_SIZE_CHECK(FCrEnviroWaveSettings);   // returned by value: checked
+...
+PluginMap::ResolveFields(scan, self, g_skillSize, g_paramsSize);
+...
+for (int32_t i = 0; i < skills.Num(); ++i)
+    if (const uint8_t* skill = PluginMap::ElementAt(skills, i, g_skillSize))
+        UseSkill(skill + g_skillLevel.offset);
+```
+
+Typed `TArray<SDK::FStruct>` indexing in the same code is compiled with the old size, so do not mix
+it with a live size. The [rule 3 check](#rule-3-check----no-direct-reads-of-game-members) judges
+each site: a `TArray<SDK::FStruct>` variable that is only passed to `PluginMap::ElementAt`
+(with the `SR_SIZE` spec) or asked `Num()` is fine, but any other use of it (`arr[i]`, `GetData() + i`)
+still asks for `SR_SIZE_CHECK`, however many other places in the file step by the live size.
+
+##### Game enums by name
+
+The numbers of a game enum can change in an update, and its entry names are what the game saves.
+`PluginMap::EnumValue` reads an entry's number from the running game's `UEnum` by name:
+
+```cpp
+int64_t deconstruct = 0;
+switch (PluginMap::EnumValue("ECrPlayerControlState", "DeconstructMode", deconstruct))
+{
+case PluginMap::EnumLookup::Found:        break;               // use `deconstruct`
+case PluginMap::EnumLookup::EntryMissing: /* log once, skip the path that needs it */ break;
+case PluginMap::EnumLookup::EnumMissing:  /* the enum is not loaded (yet): try again later */ break;
+}
+```
+
+It reads UObjects, so it runs on the game thread only, and it walks every loaded object, so call
+it once when the feature first runs and keep the value. `value` is written only on `Found`.
 
 #### GetWorld: the viewport's world
 

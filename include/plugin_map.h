@@ -31,6 +31,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <string>
 #include <type_traits>
 #include <utility>
 #include <vector>
@@ -172,6 +173,14 @@ struct PluginBitField : PluginFieldSpec
 // The size of an SDK class, checked on the running build (PLUGIN_FIELD_CHECK).
 #define SR_SIZE_CHECK(Class) \
     PluginFieldSpec{ #Class, #Class, nullptr, PLUGIN_FIELD_CHECK, sizeof(SDK::Class), -1 }
+// The size of an SDK class as the running game reflects it, not compared with
+// the compiled one: the loader reports it in `resolvedSize`. For code that only
+// steps through an array of the struct (PluginMap::ElementAt), so a build that
+// resizes it does not turn the plugin off. Code that copies the struct, takes it
+// from a ProcessEvent return or hands a buffer of it to the game depends on the
+// compiled layout: use SR_SIZE_CHECK there.
+#define SR_SIZE(Class) \
+    PluginFieldSpec{ #Class, #Class, nullptr, PLUGIN_FIELD_FLAG_NONE, sizeof(SDK::Class), -1 }
 
 namespace PluginMap
 {
@@ -236,6 +245,78 @@ namespace PluginMap
         std::vector<const char*> all;
         (AddKey(all, keys), ...);
         return all;
+    }
+}
+
+namespace PluginMap
+{
+    // Element `index` of `count` structs at `data`, stepped by the size the
+    // loader resolved for `size` (an SR_SIZE row), not by a sizeof. Read the
+    // address with the struct's resolved member offsets. Null when `data` is
+    // null, `index` is outside 0..count-1 or the size did not resolve.
+    inline const uint8_t* ElementAt(const void* data, int32_t count, int32_t index, const PluginFieldSpec& size)
+    {
+        if (!data || index < 0 || index >= count || size.resolvedSize == 0)
+            return nullptr;
+        return static_cast<const uint8_t*>(data) + static_cast<size_t>(index) * size.resolvedSize;
+    }
+    inline uint8_t* ElementAt(void* data, int32_t count, int32_t index, const PluginFieldSpec& size)
+    {
+        return const_cast<uint8_t*>(ElementAt(static_cast<const void*>(data), count, index, size));
+    }
+
+    // The same for a game TArray of the struct.
+    template <class Element>
+    const uint8_t* ElementAt(const SDK::TArray<Element>& array, int32_t index, const PluginFieldSpec& size)
+    {
+        return ElementAt(static_cast<const void*>(array.GetDataPtr()), array.Num(), index, size);
+    }
+    template <class Element>
+    uint8_t* ElementAt(SDK::TArray<Element>& array, int32_t index, const PluginFieldSpec& size)
+    {
+        return const_cast<uint8_t*>(ElementAt(static_cast<const SDK::TArray<Element>&>(array), index, size));
+    }
+}
+
+namespace PluginMap
+{
+    // How an EnumValue lookup ended.
+    enum class EnumLookup
+    {
+        Found,         // the entry's value was written
+        EntryMissing,  // the enum is loaded, but has no entry of that name on this build
+        EnumMissing,   // no enum of that name is loaded
+    };
+
+    // The value of a game enum's entry, read by name from the running game's
+    // UEnum: the numbers of a game enum can move in an update, its names are
+    // what the game saves. `enumName` is the enum's object name as the Game-SDK
+    // spells it ("ECrPlayerControlState"), `entry` the entry without the enum's
+    // prefix ("DeconstructMode"). `value` is written only on Found.
+    //
+    // GAME THREAD ONLY, like any UObject access. It walks every object the
+    // game has loaded, so look a value up once, when the feature first runs,
+    // and keep it; never per frame. On EntryMissing or EnumMissing the plugin
+    // logs it once and skips the path that needs the value, or uses its
+    // compiled value only on the build it was compiled for.
+    inline EnumLookup EnumValue(const char* enumName, const char* entry, int64_t& value)
+    {
+        const SDK::UEnum* uenum = enumName
+            ? SDK::UObject::FindObjectFast<SDK::UEnum>(enumName, SDK::EClassCastFlags::Enum) : nullptr;
+        if (!uenum)
+            return EnumLookup::EnumMissing;
+        for (int32_t i = 0; entry && i < uenum->Names.Num(); ++i)
+        {
+            // An entry is stored as "EnumName::Entry" (a plain enum: "Entry").
+            const std::string name = uenum->Names[i].First.ToString();
+            const size_t scope = name.rfind("::");
+            if (name.compare(scope == std::string::npos ? 0 : scope + 2, std::string::npos, entry) == 0)
+            {
+                value = uenum->Names[i].Second;
+                return EnumLookup::Found;
+            }
+        }
+        return EnumLookup::EntryMissing;
     }
 }
 
