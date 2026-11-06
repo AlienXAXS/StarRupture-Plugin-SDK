@@ -30,7 +30,9 @@
 #                            the SDK release tag a plugin pins fixes its headers). The Game SDK
 #                            is the submodule that commit pins ("StarRupture SDK"), so a push to
 #                            the Game SDK repo changes no plugin build until an SDK release
-#                            moves the pin. Overriding sdk_repository needs an explicit sdk_ref.
+#                            exists and the plugin's pin has been moved to it (edit the tag in
+#                            its release.yml). Releasing the SDK moves no plugin by itself.
+#                            Overriding sdk_repository needs an explicit sdk_ref.
 #   dry_run                - Build and package, upload the files as a workflow artifact, but
 #                            create no GitHub release and upload nothing to Nexus.
 #
@@ -127,6 +129,19 @@ jobs:
           ref: ${{ inputs.sdk_ref || job.workflow_sha }}
           path: plugin-sdk
           submodules: true
+
+      # An empty job.workflow_sha would make the checkout above take the SDK default branch
+      # and build on unpinned headers without any error, so stop here instead.
+      - name: Check the SDK commit
+        if: inputs.sdk_ref == ''
+        shell: pwsh
+        env:
+          WORKFLOW_SHA: ${{ job.workflow_sha }}
+        run: |
+          if (-not $env:WORKFLOW_SHA) { throw "job.workflow_sha is empty: cannot tell which SDK commit this workflow was called at. Pass sdk_ref." }
+          $head = git -C plugin-sdk rev-parse HEAD
+          if ($head -ne $env:WORKFLOW_SHA) { throw "plugin-sdk is at $head, not at the workflow commit $($env:WORKFLOW_SHA)" }
+          Write-Host "Plugin SDK and Game SDK taken from $head"
 
       - name: Checkout release notes script
         uses: actions/checkout@v4
