@@ -21,9 +21,10 @@
 // The plugin reads the item's name and icon brush itself, through its own
 // version-mapped fields, so nothing here depends on a game build.
 //
-// Threads: Init, Tick, IconIs and Shutdown run on the game thread. Get, Has and
-// Draw can run on any thread, so the render callback is fine. Shutdown frees
-// only handles and touches no game object.
+// Threads: Tick, IconIs and the scan that Init posts run on the game thread.
+// Init itself can run in PluginInit: it only sets fields and posts the scan.
+// Get, Has and Draw can run on any thread, so the render callback is fine.
+// Shutdown frees only handles and touches no game object.
 //
 // No game object is kept. The scan keeps strings. Each load finds the icon's
 // texture again inside one Tick call and lets go of it when the call ends, so
@@ -498,7 +499,8 @@ namespace ItemIcons
 
 		IconRequests::Table m_table;
 
-		// Set by Init and cleared by Shutdown, both on the game thread.
+		// Set by Init and cleared by Shutdown. Only the scan and Tick use them,
+		// both on the game thread.
 		IPluginSelf* m_self       = nullptr;
 		const char*  m_tag        = "ItemIcons";
 		Accessors    m_accessors{};
