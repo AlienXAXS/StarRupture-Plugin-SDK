@@ -300,6 +300,8 @@ Hosted at the URL stored in the sidecar, fetched fresh on every boot:
 | `interface_version_min` | The interface version this build reports (`PLUGIN_INTERFACE_VERSION`). A loader whose maximum is lower could not load this build, so it skips the update and keeps the copy that works |
 | `interface_version_max` | Highest interface version this build supports |
 | `download_url` | Direct URL to the DLL to download if an update is needed |
+| `notes` | Optional. The short list of changes in this release, one per line, from `UPDATE_NOTES.txt`; the update window prints it in full |
+| `release_notes` | Optional. The changes of this release and of earlier release tags, newest first, one `## <tag>` section each (the `UPDATE_NOTES.txt` of every tag). A loader that reads it (v1.23.1) lists the releases a player skipped. Left out when no release has notes text |
 
 If `interface_version_min`/`max` are present and do not overlap `[PLUGIN_INTERFACE_VERSION_MIN, PLUGIN_INTERFACE_VERSION_MAX]`, the update is skipped entirely — the loader will not install a plugin it cannot run.
 
@@ -307,8 +309,8 @@ If `interface_version_min`/`max` are present and do not overlap `[PLUGIN_INTERFA
 
 The reusable workflow [.github/workflows/plugin-release.yml](.github/workflows/plugin-release.yml) handles everything automatically when a plugin uses it:
 
-1. **Build** — MSBuild compiles the plugin DLL with `/p:ModLoaderBuildTag=<semver>` so the version tag is baked into `PluginInfo.version`.
-2. **Generate manifest** — a `MyPlugin-client-manifest.json` file is written from the plugin name, computed semver tag, interface version range (read directly from `plugin_interface.h`), and the GitHub release download URL.
+1. **Build** — MSBuild compiles the plugin DLL with `/p:ModLoaderBuildTag=<semver>` so the version tag is baked into `PluginInfo.version`. The headers and the Game SDK come from the SDK commit the workflow is pinned at (`@<SDK release tag>`): the Game SDK is that commit's `StarRupture SDK` submodule, so moving it (`Update SDK.bat`, then an SDK release) is the only way a Game SDK push reaches a plugin build.
+2. **Generate manifest** — a `MyPlugin-client-manifest.json` file is written from the plugin name, computed semver tag, interface version range (read directly from `plugin_interface.h`), and the GitHub release download URL. `UPDATE_NOTES.txt` fills `notes`, and the ModLoader's `build-versioned-notes.ps1` (tag v1.23.1) builds `release_notes` from the notes files at the earlier release tags, so the job checks out the full history. A first release, or a repo with no notes files, gets no `release_notes`.
 3. **Generate ZIP** — a `Plugins\` folder is staged containing:
    - `MyPlugin.dll` — the compiled plugin
    - `MyPlugin.json` — the sidecar pointing at the `latest/download` manifest URL

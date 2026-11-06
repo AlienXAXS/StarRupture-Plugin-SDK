@@ -25,14 +25,22 @@
 #   nexus_display_name     - Name shown on the Nexus files (defaults to plugin_name).
 #   nexus_description_file - BBCode file that replaces the Nexus page description when it exists
 #                            (default nexus/description.bbcode).
-#   sdk_repository, sdk_ref - Where to take the Plugin SDK headers from (default: the default
-#                            branch of AlienXAXS/StarRupture-Plugin-SDK).
+#   sdk_repository, sdk_ref - Where to take the Plugin SDK headers from (default: the commit of
+#                            AlienXAXS/StarRupture-Plugin-SDK this workflow was called at, so
+#                            the SDK release tag a plugin pins fixes its headers). The Game SDK
+#                            is the submodule that commit pins ("StarRupture SDK"), so a push to
+#                            the Game SDK repo changes no plugin build until an SDK release
+#                            moves the pin. Overriding sdk_repository needs an explicit sdk_ref.
 #   dry_run                - Build and package, upload the files as a workflow artifact, but
 #                            create no GitHub release and upload nothing to Nexus.
 #
 # Release notes: UPDATE_NOTES.txt at the repo root, one change per line, is shown above the
 # generated notes on the release page, stored as "notes" in the update manifest, and is the
 # Nexus changelog entry. A missing or empty file means the entry links to the release.
+# The manifest's "release_notes" field holds the notes of this release and of earlier release
+# tags (their UPDATE_NOTES.txt), newest first, one "## <tag>" section each, so a loader can list
+# what a player missed. It is built by the ModLoader's build-versioned-notes.ps1 (tag v1.23.1)
+# and left out when there are no notes at all (a first release, or no notes files).
 #
 # Secrets (via "secrets: inherit", only when nexus_mod_id is set): NEXUS_APIKEY,
 # NEXUS_CLIENT_GROUP_ID and, with server_build, NEXUS_SERVER_GROUP_ID.
@@ -86,7 +94,7 @@ on:
         type: string
         default: 'AlienXAXS/StarRupture-Plugin-SDK'
       sdk_ref:
-        description: 'Branch, tag or sha of the Plugin SDK (empty: default branch)'
+        description: 'Branch, tag or sha of the Plugin SDK (empty: the commit this workflow runs from)'
         required: false
         type: string
         default: ''
@@ -107,19 +115,26 @@ jobs:
     steps:
       - name: Checkout plugin repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # build-versioned-notes.ps1 reads UPDATE_NOTES.txt from earlier tags
 
-      - name: Checkout Plugin SDK
+      # job.workflow_sha is the commit this workflow file comes from, i.e. the SDK release
+      # tag the plugin pins. The Game SDK is that commit's submodule, so one pin fixes both.
+      - name: Checkout Plugin SDK and its Game SDK
         uses: actions/checkout@v4
         with:
           repository: ${{ inputs.sdk_repository }}
-          ref: ${{ inputs.sdk_ref }}
+          ref: ${{ inputs.sdk_ref || job.workflow_sha }}
           path: plugin-sdk
+          submodules: true
 
-      - name: Checkout Game SDK
+      - name: Checkout release notes script
         uses: actions/checkout@v4
         with:
-          repository: AlienXAXS/StarRupture-Game-SDK
-          path: game-sdk
+          repository: AlienXAXS/StarRupture-ModLoader
+          ref: v1.23.1
+          sparse-checkout: .github/scripts
+          path: modloader-scripts
 
       - name: Add MSBuild to PATH
         uses: microsoft/setup-msbuild@v2
@@ -232,7 +247,7 @@ jobs:
               /p:Platform=x64 `
               /p:PostBuildEventUseInBuild=false `
               /p:ModLoaderBuildTag="$env:TAG" `
-              /p:GameSDKRoot="${{ github.workspace }}\game-sdk" `
+              /p:GameSDKRoot="${{ github.workspace }}\plugin-sdk\StarRupture SDK" `
               /p:PluginSDKInclude="${{ github.workspace }}\plugin-sdk\include" `
               /m `
               /v:minimal
@@ -275,6 +290,27 @@ jobs:
             $noteLines = @(Get-Content $notesFile | ForEach-Object { ($_.Trim() -replace '^[-*](\s+|$)', '') } | Where-Object { $_ })
           }
 
+          # A player can jump over releases, so "release_notes" holds one section per
+          # release, newest first, each under a "## <tag>" header: this release's
+          # UPDATE_NOTES.txt on top, then the UPDATE_NOTES.txt of earlier release tags.
+          # The script skips tags with no notes file and bounds the history to 10
+          # releases and 64 KB. It throws when the repository has no tags, which is a
+          # plugin's first release: there is no history then, so the field is left out,
+          # as it is when no release has any notes text.
+          $releaseNotes = ""
+          if ((git -C $ws rev-parse --is-shallow-repository) -eq 'true') {
+            throw "The checkout is shallow, so the release tags are missing; fetch-depth: 0 is needed."
+          }
+          if (@(git -C $ws tag).Count -gt 0) {
+            $history = & "$ws\modloader-scripts\.github\scripts\build-versioned-notes.ps1" -Repo $ws -Version $tag
+            if ($history.Truncated -gt 0) {
+              Write-Host "::notice title=Release notes bounded::$($history.Truncated) older release(s) left out of release_notes (limit 10 releases, 64 KB)."
+            }
+            $releaseNotes = $history.Text
+          } else {
+            Write-Host "::notice title=Release notes::the repository has no tags (a first release): the manifest has no release_notes."
+          }
+
           # The same lines are the Nexus changelog entry for this version.
           $changelog = if ($noteLines.Count -gt 0) { $noteLines -join "`n" } else { "See https://github.com/$repo/releases/tag/$tag" }
           $delim = "EOF_" + [guid]::NewGuid().ToString('N')
@@ -298,6 +334,9 @@ jobs:
             }
             if ($noteLines.Count -gt 0) {
               $manifest["notes"] = $noteLines -join "`n"
+            }
+            if ($releaseNotes) {
+              $manifest["release_notes"] = $releaseNotes
             }
             $manifest | ConvertTo-Json -Depth 1 | Out-File "$ws\$name-$varLower-manifest.json" -Encoding utf8NoBOM
             Write-Host "Generated $variant manifest:"
