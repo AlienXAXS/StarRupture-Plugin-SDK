@@ -2918,7 +2918,7 @@ The loader accepts plugins whose `interfaceVersion` is in `[PLUGIN_INTERFACE_VER
 
 The current `PLUGIN_INTERFACE_VERSION_MIN` is **70** and `PLUGIN_INTERFACE_VERSION_MAX` is **75** (see `plugin_interface.h` for the authoritative value and full per-version changelog comments).
 
-A plugin built against these headers declares **75** by default (`PLUGIN_INTERFACE_VERSION`), and loader 1.23.0, whose maximum is 74, refuses it and shows it as needing a newer mod loader, even if it uses nothing from v75. A plugin that uses nothing new should keep declaring 74 until loader 1.23.1 is out.
+A plugin built against these headers declares **75** by default (`PLUGIN_INTERFACE_VERSION`). Loader 1.23.0 accepts 70 through 75, so a plugin that uses nothing from v75 may still declare 74. A loader before 1.23.0 refuses a plugin newer than its maximum and shows it as needing a newer mod loader.
 
 ---
 
