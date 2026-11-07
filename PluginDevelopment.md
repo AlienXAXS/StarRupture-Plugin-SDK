@@ -802,6 +802,19 @@ The `PropertyGroup` is the pin, and is optional. The SDK's own `Shared.props` im
 If the import did not happen, say with only a copy of the `include` folder, `plugin_map.h` stops the
 build with an error that names the file.
 
+Give `PluginSDKInclude` a default that does not depend on who reads it. MSBuild resolves a relative
+path in the `<Import>` and its `Exists()` from the folder of the `.props` file, and a relative path
+in the include directories from the project folder, so a default like `..\..\StarRupture-Plugin-SDK\include`
+in a `Shared.props` at the repository root, with the project in `src\`, reaches the SDK for the
+compiler but not for the import. The import is then skipped without a message, and `plugin_map.h`
+stops the build. Write the default from the props file's own folder:
+
+```xml
+<PluginSDKInclude Condition="'$(PluginSDKInclude)' == ''">$(MSBuildThisFileDirectory)..\StarRupture-Plugin-SDK\include</PluginSDKInclude>
+```
+
+An absolute `/p:PluginSDKInclude=...` or a `PluginSDKInclude` environment variable works as it is.
+
 ```cpp
 #include "plugin_map.h"
 

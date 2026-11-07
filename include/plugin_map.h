@@ -31,7 +31,11 @@
 // Without PluginGameBuild.props the plugin declares game build 0, and the loader
 // refuses a migrated plugin that does, so stop here rather than at load.
 #if !defined(PLUGIN_GAME_BUILD_PROPS) && (!defined(PLUGIN_GAME_BUILT_CL) || PLUGIN_GAME_BUILT_CL == 0)
-#error "PluginGameBuild.props was not imported, so this plugin would declare gameBuiltCL 0 and the loader refuses a migrated plugin that does. The file sits at the root of the Plugin SDK, beside the include folder: point PluginSDKInclude at a full clone of StarRupture-Plugin-SDK and import the file from your Shared.props."
+#if __has_include("../PluginGameBuild.props")
+#error "PluginGameBuild.props was not imported, so this plugin would declare gameBuiltCL 0 and the loader refuses a migrated plugin that does. The file is there, beside the include folder, so the import in your Shared.props did not find it: a relative PluginSDKInclude is resolved from the folder of the .props file by the <Import>, and from the project folder by the include path. Set PluginSDKInclude to an absolute path (/p:PluginSDKInclude=... or an environment variable), or default it to $(MSBuildThisFileDirectory) followed by the path to the SDK include folder."
+#else
+#error "PluginGameBuild.props was not imported, so this plugin would declare gameBuiltCL 0 and the loader refuses a migrated plugin that does. The file sits at the root of the Plugin SDK, beside the include folder, and this include folder has none: point PluginSDKInclude at a full clone of StarRupture-Plugin-SDK and import the file from your Shared.props."
+#endif
 #endif
 
 #include <cstddef>
