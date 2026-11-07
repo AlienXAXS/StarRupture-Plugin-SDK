@@ -31,6 +31,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <new>
 #include <string>
 #include <type_traits>
 #include <utility>
@@ -276,6 +277,489 @@ namespace PluginMap
     {
         return const_cast<uint8_t*>(ElementAt(static_cast<const SDK::TArray<Element>&>(array), index, size));
     }
+}
+
+// Structs the plugin cannot hold at a compiled size.
+//
+// SR_SIZE gives a struct's size on the running build (resolvedSize) and the
+// field accessors give each member's offset on it. A plugin that copies the
+// struct, has the game fill it or walks a game container of it still needs
+// memory of that size. The helpers below give it: StructBuffer (a block of the
+// struct's live size), ParamsBlock (the parameter block of a ProcessEvent call)
+// and ScriptMapView / ScriptSetView (a TMap or TSet whose element size is only
+// known live). Members of all of them are read and written through the same
+// accessors as any game object, e.g. field.In(buffer.Data()).
+namespace PluginMap
+{
+    // A zeroed block of one struct's live size, aligned to 16 bytes (every game
+    // struct aligns to 16 or less). Empty when the size did not resolve or is
+    // implausible, so the feature that needs it is turned off:
+    //   PluginMap::StructBuffer params(kElectricitySize);
+    //   if (!params) return;
+    // The block lives as long as the object; moving it hands the block over.
+    class StructBuffer
+    {
+    public:
+        static constexpr size_t kAlignment = 16;
+        static constexpr uint32_t kMaxSize = 1u << 20; // a larger "struct" is a bad size, not a struct
+
+        StructBuffer() = default;
+        explicit StructBuffer(const PluginFieldSpec& size) : StructBuffer(size.resolvedSize) {}
+        explicit StructBuffer(uint32_t size)
+        {
+            if (size == 0 || size > kMaxSize)
+                return;
+            m_data = static_cast<uint8_t*>(::operator new(size, std::align_val_t{ kAlignment }));
+            m_size = size;
+            std::memset(m_data, 0, size);
+        }
+        StructBuffer(const StructBuffer&) = delete;
+        StructBuffer& operator=(const StructBuffer&) = delete;
+        StructBuffer(StructBuffer&& other) noexcept : m_data(other.m_data), m_size(other.m_size)
+        {
+            other.m_data = nullptr;
+            other.m_size = 0;
+        }
+        StructBuffer& operator=(StructBuffer&& other) noexcept
+        {
+            if (this != &other)
+            {
+                Release();
+                m_data = other.m_data;
+                m_size = other.m_size;
+                other.m_data = nullptr;
+                other.m_size = 0;
+            }
+            return *this;
+        }
+        ~StructBuffer() { Release(); }
+
+        explicit operator bool() const { return m_data != nullptr; }
+        uint8_t* Data() { return m_data; }
+        const uint8_t* Data() const { return m_data; }
+        uint32_t Size() const { return m_size; }
+
+        // Copies the struct at `source` (a game struct of this live size) in.
+        // False, and nothing copied, when the buffer is empty or `source` null.
+        bool CopyFrom(const void* source)
+        {
+            if (!m_data || !source)
+                return false;
+            std::memcpy(m_data, source, m_size);
+            return true;
+        }
+        // Copies the block over the game struct at `destination`.
+        bool CopyTo(void* destination) const
+        {
+            if (!m_data || !destination)
+                return false;
+            std::memcpy(destination, m_data, m_size);
+            return true;
+        }
+
+    private:
+        void Release()
+        {
+            if (m_data)
+                ::operator delete(m_data, std::align_val_t{ kAlignment });
+            m_data = nullptr;
+            m_size = 0;
+        }
+
+        uint8_t* m_data = nullptr;
+        uint32_t m_size = 0;
+    };
+}
+
+namespace PluginMap
+{
+    // One parameter (or the return value) of a UFunction as the running game
+    // reflects it: its property offset in the parameter block, and its size.
+    struct FunctionParam
+    {
+        const char* name;
+        uint32_t    offset;
+        uint32_t    size;
+    };
+
+    // The parameter block of a ProcessEvent call, sized from the function's
+    // live ParmsSize rather than from a compiled parameter struct. The caller
+    // passes the live ParmsSize and the reflected offset and size of each
+    // parameter it touches (the return value included); a parameter that does
+    // not fit inside ParmsSize makes the block invalid, so a build that changed
+    // the function turns the feature off instead of writing out of bounds.
+    //
+    //   PluginMap::ParamsBlock block(parmsSize, { { "InSize", inOffset, inSize }, { "ReturnValue", retOffset, retSize } });
+    //   if (!block) return;
+    //   std::memcpy(block.Param("InSize"), &value, sizeof(value));
+    //   PluginMap::Call(object, function, block);
+    //   const uint8_t* result = block.Param("ReturnValue");
+    //
+    // Game thread only, like any ProcessEvent.
+    class ParamsBlock
+    {
+    public:
+        ParamsBlock(uint32_t liveParmsSize, std::vector<FunctionParam> params)
+            : m_buffer(liveParmsSize), m_params(std::move(params))
+        {
+            for (const FunctionParam& param : m_params)
+            {
+                if (param.size == 0 || param.offset > liveParmsSize || param.size > liveParmsSize - param.offset)
+                {
+                    m_buffer = StructBuffer();
+                    break;
+                }
+            }
+        }
+
+        explicit operator bool() const { return static_cast<bool>(m_buffer); }
+        void* Data() { return m_buffer.Data(); }
+        uint32_t Size() const { return m_buffer.Size(); }
+
+        // The parameter `name` in the block, or null when the block is invalid
+        // or has no such parameter.
+        uint8_t* Param(const char* name)
+        {
+            if (!m_buffer || !name)
+                return nullptr;
+            for (const FunctionParam& param : m_params)
+                if (param.name && std::strcmp(param.name, name) == 0)
+                    return m_buffer.Data() + param.offset;
+            return nullptr;
+        }
+
+    private:
+        StructBuffer m_buffer;
+        std::vector<FunctionParam> m_params;
+    };
+
+    // object->ProcessEvent(function, block). False, and no call, when the block
+    // is invalid or the object or function is null.
+    template <class Object, class Function>
+    bool Call(Object* object, Function* function, ParamsBlock& block)
+    {
+        if (!object || !function || !block)
+            return false;
+        object->ProcessEvent(function, block.Data());
+        return true;
+    }
+}
+
+// Walking a game TMap or TSet whose element size is only known at run time.
+//
+// A TMap<K, V> is a TSet of TPair<K, V>, a TSet is a sparse array of elements
+// (the element, then two int32 for the hash chain) and a sparse array is an
+// array whose unused slots hold a free-list link and whose used slots are
+// marked in a bit array. Compiled, `SDK::TMap<K, FStruct>` steps that array by
+// sizeof(FStruct), which is wrong the moment the game resizes the struct. These
+// views step it by the stride computed from the live key and value sizes.
+//
+// The layout is Unreal Engine 5's script layout, the same arithmetic as
+// FScriptMap::GetScriptLayout, FScriptSet::GetScriptLayout and
+// FScriptSparseArray::GetScriptLayout (UE 5.0 and later; the Game-SDK's
+// UnrealContainers.hpp compiles to the same offsets). The loader's reflection
+// interface does not expose an FMapProperty's stored layout, so it is computed
+// from the key and value size and alignment. Sizes come from SR_SIZE rows; an
+// alignment is the live UStruct::MinAlignment, which a struct keeps across a
+// resize unless its members change. A layout that cannot be right for the
+// container in memory is caught when a view is made (Reason says why), and the
+// view then yields nothing.
+namespace PluginMap
+{
+    // The offsets of a TSet element on the running build.
+    struct ScriptSetLayout
+    {
+        uint32_t hashNextIdOffset = 0; // FSetElementId HashNextId
+        uint32_t hashIndexOffset  = 0; // int32 HashIndex
+        uint32_t elementSize      = 0; // TSetElement size, padded to its alignment
+        uint32_t stride           = 0; // the sparse array's step: TSetElement padded to hold a free-list link
+        uint32_t keyOffset        = 0; // map: TPair::Key in an element
+        uint32_t valueOffset      = 0; // map: TPair::Value in an element; 0 for a set
+        bool     valid            = false;
+    };
+
+    namespace ScriptLayoutDetail
+    {
+        inline bool IsPowerOfTwo(uint32_t value) { return value != 0 && (value & (value - 1)) == 0; }
+        inline uint32_t AlignUp(uint32_t value, uint32_t alignment) { return (value + alignment - 1) & ~(alignment - 1); }
+        inline uint32_t Max(uint32_t a, uint32_t b) { return a > b ? a : b; }
+        // A size or alignment no game struct has.
+        inline bool PlausibleSize(uint32_t size) { return size != 0 && size <= StructBuffer::kMaxSize; }
+        inline bool PlausibleAlign(uint32_t align) { return IsPowerOfTwo(align) && align <= 64; }
+
+        // FScriptSet::GetScriptLayout on an element of `size` and `align`.
+        inline ScriptSetLayout SetOf(uint32_t size, uint32_t align)
+        {
+            ScriptSetLayout layout;
+            if (!PlausibleSize(size) || !PlausibleAlign(align))
+                return layout;
+            layout.hashNextIdOffset = AlignUp(size, 4);
+            layout.hashIndexOffset  = layout.hashNextIdOffset + 4;
+            const uint32_t alignment = Max(align, 4);
+            layout.elementSize      = AlignUp(layout.hashIndexOffset + 4, alignment);
+            // FScriptSparseArray::GetScriptLayout: a free slot holds two int32.
+            layout.stride           = AlignUp(Max(layout.elementSize, 8), alignment);
+            layout.valid            = true;
+            return layout;
+        }
+    }
+
+    // The layout of a TSet of elements of `elementSize` and `elementAlign`.
+    inline ScriptSetLayout SetLayout(uint32_t elementSize, uint32_t elementAlign)
+    {
+        return ScriptLayoutDetail::SetOf(elementSize, elementAlign);
+    }
+
+    // The layout of a TMap<Key, Value> (FScriptMap::GetScriptLayout): the pair
+    // is the key, then the value at its alignment, padded to the larger one.
+    inline ScriptSetLayout MapLayout(uint32_t keySize, uint32_t keyAlign, uint32_t valueSize, uint32_t valueAlign)
+    {
+        using namespace ScriptLayoutDetail;
+        if (!PlausibleSize(keySize) || !PlausibleAlign(keyAlign) || !PlausibleSize(valueSize) || !PlausibleAlign(valueAlign))
+            return ScriptSetLayout{};
+        const uint32_t valueOffset = AlignUp(keySize, valueAlign);
+        const uint32_t pairAlign   = Max(keyAlign, valueAlign);
+        const uint32_t pairSize    = AlignUp(valueOffset + valueSize, pairAlign);
+        ScriptSetLayout layout = SetOf(pairSize, pairAlign);
+        layout.keyOffset   = 0;
+        layout.valueOffset = valueOffset;
+        return layout;
+    }
+
+    // The engine's TSet as it sits in memory (x64): a sparse array (data, its
+    // used-slot bits, the free list), then the hash. Only the sparse array is
+    // read; the hash is checked, never followed.
+    struct ScriptSetMemory
+    {
+        uint8_t*  data;           // TArray: Data, Num, Max
+        int32_t   num;
+        int32_t   max;
+        uint32_t  inlineBits[4];  // TBitArray<TInlineAllocator<4>>
+        uint32_t* secondaryBits;
+        int32_t   numBits;
+        int32_t   maxBits;
+        int32_t   firstFreeIndex;
+        int32_t   numFreeIndices;
+        int32_t   inlineHash[2];  // TInlineAllocator<1> int32 (8 with padding)
+        int32_t*  secondaryHash;
+        int32_t   hashSize;
+        int32_t   padding;
+    };
+    static_assert(sizeof(void*) != 8 || sizeof(ScriptSetMemory) == 0x50, "a TSet is 0x50 bytes");
+    static_assert(sizeof(void*) != 8 || offsetof(ScriptSetMemory, hashSize) == 0x48, "TSet::HashSize is at 0x48");
+
+    // Why a view yields nothing. None = it yields every element.
+    enum class ScriptWalkReason
+    {
+        None,
+        NullContainer,
+        BadLayout,       // a key, value or alignment that is not a game struct's
+        BadHeader,       // counts that no container has
+        BadBits,         // used-slot bits that do not match the counts
+        BadFreeList,     // a free list that does not walk the unused slots
+        BadElement,      // a hash field outside the hash: the element layout is not this container's
+    };
+
+    inline const char* ScriptWalkReasonText(ScriptWalkReason reason)
+    {
+        switch (reason)
+        {
+        case ScriptWalkReason::None:          return "ok";
+        case ScriptWalkReason::NullContainer: return "container is null";
+        case ScriptWalkReason::BadLayout:     return "element layout has an implausible size or alignment";
+        case ScriptWalkReason::BadHeader:     return "container counts are inconsistent";
+        case ScriptWalkReason::BadBits:       return "used-slot bits do not match the counts";
+        case ScriptWalkReason::BadFreeList:   return "free list does not match the unused slots";
+        case ScriptWalkReason::BadElement:    return "an element's hash fields are outside the hash: wrong element stride";
+        }
+        return "unknown";
+    }
+
+    // A walk over the live elements of a TSet, at the run-time stride.
+    //   PluginMap::ScriptSetView view(set, PluginMap::SetLayout(size, align));
+    //   if (!view) { log(view.ReasonText()); return; }
+    //   view.ForEach([&](uint8_t* element) { ... });
+    // Game thread only, and only inside the tick that fetched the container:
+    // the pointers it gives die with the container's next change.
+    class ScriptSetView
+    {
+    public:
+        ScriptSetView(const void* set, const ScriptSetLayout& layout)
+            : m_layout(layout)
+        {
+            m_reason = Validate(static_cast<const ScriptSetMemory*>(set));
+            if (m_reason == ScriptWalkReason::None)
+                m_set = static_cast<const ScriptSetMemory*>(set);
+        }
+
+        explicit operator bool() const { return m_reason == ScriptWalkReason::None; }
+        ScriptWalkReason Reason() const { return m_reason; }
+        const char* ReasonText() const { return ScriptWalkReasonText(m_reason); }
+        const ScriptSetLayout& Layout() const { return m_layout; }
+
+        // The live element count (0 for an empty or an invalid view).
+        int32_t Num() const { return m_set ? m_set->num - m_set->numFreeIndices : 0; }
+
+        // fn(uint8_t* element) for each live element, in slot order. A fn that
+        // returns bool stops the walk by returning false. Gives nothing for an
+        // invalid view.
+        template <class Fn>
+        void ForEach(Fn&& fn) const
+        {
+            if (!m_set)
+                return;
+            for (int32_t i = 0; i < m_set->num; ++i)
+            {
+                if (!IsUsed(*m_set, i))
+                    continue;
+                uint8_t* element = m_set->data + static_cast<size_t>(i) * m_layout.stride;
+                if constexpr (std::is_same_v<decltype(fn(element)), bool>)
+                {
+                    if (!fn(element))
+                        return;
+                }
+                else
+                {
+                    fn(element);
+                }
+            }
+        }
+
+    private:
+        static const uint32_t* Bits(const ScriptSetMemory& set)
+        {
+            return set.secondaryBits ? set.secondaryBits : set.inlineBits;
+        }
+        static bool IsUsed(const ScriptSetMemory& set, int32_t index)
+        {
+            return ((Bits(set)[index >> 5] >> (index & 31)) & 1u) != 0;
+        }
+        static int32_t ReadInt(const uint8_t* at)
+        {
+            int32_t value;
+            std::memcpy(&value, at, sizeof(value));
+            return value;
+        }
+
+        ScriptWalkReason Validate(const ScriptSetMemory* set) const
+        {
+            if (!set)
+                return ScriptWalkReason::NullContainer;
+            if (!m_layout.valid || m_layout.stride == 0 || m_layout.hashIndexOffset + 4 > m_layout.elementSize)
+                return ScriptWalkReason::BadLayout;
+
+            const int32_t num = set->num;
+            const int32_t kMaxElements = 1 << 24;
+            if (num < 0 || num > kMaxElements || set->max < num || set->numFreeIndices < 0 || set->numFreeIndices > num
+                || (num > 0 && !set->data))
+                return ScriptWalkReason::BadHeader;
+            if (num == 0)
+                return set->numFreeIndices == 0 ? ScriptWalkReason::None : ScriptWalkReason::BadHeader;
+
+            // The bits are one per slot; more than the inline four words need the heap block.
+            if (set->numBits != num || (num > 128 && !set->secondaryBits))
+                return ScriptWalkReason::BadBits;
+            int32_t used = 0;
+            for (int32_t i = 0; i < num; ++i)
+                used += IsUsed(*set, i) ? 1 : 0;
+            if (used != num - set->numFreeIndices)
+                return ScriptWalkReason::BadBits;
+
+            // The free list threads the unused slots through their first 8 bytes. With
+            // a wrong stride it reads other bytes, and does not close on itself.
+            int32_t free = set->firstFreeIndex;
+            if (set->numFreeIndices == 0 && free != -1)
+                return ScriptWalkReason::BadFreeList;
+            for (int32_t seen = 0; seen < set->numFreeIndices; ++seen)
+            {
+                if (free < 0 || free >= num || IsUsed(*set, free))
+                    return ScriptWalkReason::BadFreeList;
+                free = ReadInt(set->data + static_cast<size_t>(free) * m_layout.stride + 4);
+            }
+            if (free != -1)
+                return ScriptWalkReason::BadFreeList;
+
+            // A used element's hash fields are in range of the hash.
+            if (used > 0)
+            {
+                const uint32_t hashSize = static_cast<uint32_t>(set->hashSize);
+                if (set->hashSize <= 0 || !ScriptLayoutDetail::IsPowerOfTwo(hashSize) || set->hashSize > kMaxElements * 2)
+                    return ScriptWalkReason::BadElement;
+                for (int32_t i = 0; i < num; ++i)
+                {
+                    if (!IsUsed(*set, i))
+                        continue;
+                    const uint8_t* element = set->data + static_cast<size_t>(i) * m_layout.stride;
+                    const int32_t next  = ReadInt(element + m_layout.hashNextIdOffset);
+                    const int32_t index = ReadInt(element + m_layout.hashIndexOffset);
+                    if (index < 0 || index >= set->hashSize || next < -1 || next >= num)
+                        return ScriptWalkReason::BadElement;
+                }
+            }
+            return ScriptWalkReason::None;
+        }
+
+        const ScriptSetMemory* m_set = nullptr;
+        ScriptSetLayout        m_layout;
+        ScriptWalkReason       m_reason = ScriptWalkReason::None;
+    };
+
+    // A walk over the live pairs of a TMap, at the run-time stride.
+    //   PluginMap::ScriptMapView map(mapField.In(object),
+    //       PluginMap::MapLayout(keySize, keyAlign, valueSize.resolvedSize, valueAlign));
+    //   if (!map) return;
+    //   map.ForEach([&](uint8_t* key, uint8_t* value) { ... });
+    //   uint8_t* value = map.Find([&](const uint8_t* key) { return SameTag(key, tag); });
+    class ScriptMapView
+    {
+    public:
+        ScriptMapView(const void* map, const ScriptSetLayout& layout) : m_set(map, layout) {}
+
+        explicit operator bool() const { return static_cast<bool>(m_set); }
+        ScriptWalkReason Reason() const { return m_set.Reason(); }
+        const char* ReasonText() const { return m_set.ReasonText(); }
+        int32_t Num() const { return m_set.Num(); }
+
+        // fn(uint8_t* key, uint8_t* value) for each live pair; a fn that returns
+        // bool stops the walk by returning false.
+        template <class Fn>
+        void ForEach(Fn&& fn) const
+        {
+            const ScriptSetLayout& layout = m_set.Layout();
+            m_set.ForEach([&](uint8_t* element)
+            {
+                uint8_t* key = element + layout.keyOffset;
+                uint8_t* value = element + layout.valueOffset;
+                if constexpr (std::is_same_v<decltype(fn(key, value)), bool>)
+                    return fn(key, value);
+                else
+                {
+                    fn(key, value);
+                    return true;
+                }
+            });
+        }
+
+        // The value of the first pair whose key `isKey(const uint8_t* key)` accepts,
+        // or null: a linear walk, for the small maps a game keeps by tag. The
+        // engine's TMap::operator[] steps by the compiled value size instead.
+        template <class Pred>
+        uint8_t* Find(Pred&& isKey) const
+        {
+            uint8_t* found = nullptr;
+            ForEach([&](uint8_t* key, uint8_t* value)
+            {
+                if (!isKey(static_cast<const uint8_t*>(key)))
+                    return true;
+                found = value;
+                return false;
+            });
+            return found;
+        }
+
+    private:
+        ScriptSetView m_set;
+    };
 }
 
 namespace PluginMap
