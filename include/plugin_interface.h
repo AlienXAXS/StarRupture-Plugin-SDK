@@ -697,8 +697,10 @@
 //      takes it: it can be hovered, clicked and dragged, and a click on it is
 //      kept from the menu. Every other widget window stays click-through, as
 //      before (child windows inside it are ImGui windows of their own).
-//      The keyboard stays with the game. Nothing changes under exclusive
-//      capture.
+//      The keyboard stays with the game, except that a focused text field
+//      keeps its keys. Nothing changes under exclusive capture. A plugin
+//      panel or AcquireInputCapture token is not exclusive over those
+//      screens: see AcquireInputCapture.
 //
 //      Added ConfigValueType::Choice (a dropdown on the config page) and
 //      ConfigValueType::Hidden (a value the plugin saves by itself, which the
@@ -813,9 +815,54 @@
 //      can add bits without a new interface version; a plugin ignores bits it
 //      does not know.
 //
+//      Also in v74: PLUGIN_FIELD_ANY_SIZE, a flag on a reflected
+//      PluginFieldRequest (size 0) that takes whatever size the game reflects
+//      and returns it in PluginFieldResult::size. A loader before v74 refuses
+//      the request as a size mismatch, so a plugin that must also run there
+//      declares 73 and sends the size it was compiled with. A size of 0
+//      without the flag is a size mismatch, as before.
+//
+// v75 (2026-11-04): Panel title-bar buttons and collapse. PluginPanelDesc gained
+//      titleBarFn, an optional callback the loader runs inside the title bar it
+//      draws for the panel, right after the title text, so a plugin can add its
+//      own small buttons there with the usual SameLine layout (a collapse
+//      button, say). The panel registry's IPluginUIEvents gained
+//      IsPanelCollapsed and SetPanelCollapsed: a collapsed panel shrinks to
+//      its title bar, keeps its width and does not call renderFn, and
+//      expanding it again restores the size it had. The loader does not save
+//      the collapsed state; a plugin that wants it kept saves it in its own
+//      config and calls SetPanelCollapsed after RegisterPanel.
+//      titleBarFn is appended at the END of PluginPanelDesc, and the two calls
+//      at the BOTTOM of IPluginUIEvents, so nothing a v70-v74 plugin reads by
+//      offset moved and MIN stays at 70. The loader reads titleBarFn only from
+//      a plugin that declares interface 75 or later: a smaller descriptor from
+//      an older plugin ends before the field, and is never read past its end.
+//      A v75 plugin is refused by a v74 loader, which has neither the field
+//      nor the calls.
+//      A plugin built against these headers declares 75 by default
+//      (PLUGIN_INTERFACE_VERSION). Loader 1.23.0 accepts 70 through 75, so a
+//      plugin that uses nothing from v75 may still declare 74. A loader before
+//      1.23.0 refuses a plugin newer than its maximum.
+//
+//      Also in v75: a widget that takes the mouse over a game menu only where no menu
+//      widget is under the cursor. Added PluginWindowFlags_MenuMouseWhereUncovered
+//      (1 << 29), loader-only like PauseMenuMouseInputs. Over the Escape menu and
+//      the game's other cursor screens a widget was either click-through
+//      (the default) or took the mouse everywhere it is drawn
+//      (PauseMenuMouseInputs). With the new flag it takes the mouse where no
+//      widget of the game's menu is hovered, and is click-through where one is, so
+//      the menu's buttons stay clickable under it and the rest of the widget
+//      stays usable. The loader asks the game whether a menu widget is hovered
+//      once per tick, so the answer can be one frame old. If a menu's root is
+//      hit-testable across the whole screen, the widget stays click-through
+//      everywhere there. PauseMenuMouseInputs wins when both are set.
+//      Flags only: no struct or table changed and MIN stays at 70. A loader
+//      older than v75 passes the bit to ImGui, which ignores it, so the widget
+//      stays click-through there.
+//
 #define PLUGIN_INTERFACE_VERSION_MIN 70
-#define PLUGIN_INTERFACE_VERSION_MAX 74
-#define PLUGIN_INTERFACE_VERSION 74
+#define PLUGIN_INTERFACE_VERSION_MAX 75
+#define PLUGIN_INTERFACE_VERSION 75
 
 enum class PluginLogLevel { Trace = 0, Debug = 1, Info = 2, Warn = 3, Error = 4 };
 enum class ConfigValueType { String, Integer, Float, Boolean, Keybind, Choice /* v71 */, Hidden /* v71 */ };
@@ -1097,13 +1144,27 @@ static_assert(offsetof(PluginScanRequest, candidates)     == 56, "v72 starts whe
 //   reflected (no flag)     the offset comes from the running game's own
 //                           reflection data, found by class and member name,
 //                           so it is right on any build. The size must equal
-//                           the request's.
+//                           the request's, unless PLUGIN_FIELD_ANY_SIZE is set
+//                           (with size 0): then any size is accepted and the
+//                           member's size on this build comes back in
+//                           PluginFieldResult::size, for a member whose type
+//                           differs between builds (a float on one, a double
+//                           on the next). The flag is for a reflected member
+//                           only: with NATIVE, CHECK, BITFIELD, a size row or
+//                           a non-zero size, the request is refused.
 //   PLUGIN_FIELD_NATIVE     a member reflection does not describe. The offset
 //                           comes from the row for the running changelist, or
 //                           builtOffset on builtCL. On any other build it
-//                           fails. The member must also lie inside its class
-//                           as the running game reflects the class, or it
-//                           fails.
+//                           fails. In the client build the member must also
+//                           lie inside its class as the running game reflects
+//                           the class, or it fails. For a class reflection
+//                           does not know at all (a plain C++ type such as
+//                           FMassEntityManager) there is no size to bound by:
+//                           the row for the running changelist stands alone,
+//                           builtOffset is not used, and a build with no row
+//                           fails. The server build does not bound a native
+//                           member by its class, so it keeps builtOffset on
+//                           builtCL.
 //   PLUGIN_FIELD_CHECK      something the plugin keeps using at its compiled
 //                           offset or size (a struct copied by value, an array
 //                           stride). Fails unless the running build matches it.
@@ -1120,7 +1181,7 @@ static_assert(offsetof(PluginScanRequest, candidates)     == 56, "v72 starts whe
 // when that key names the same class and member (or a member the map records
 // as renamed), then the request's candidates for any changelist the map has
 // no row for. A candidate that disagrees with the map's row for its changelist
-// fails the request. The dedicated server reads no reflection: there only the
+// fails the request. The dedicated server has no version map: there only the
 // request's own candidates count, and a native member is not bounded.
 // ---------------------------------------------------------------------------
 enum PluginFieldFlags
@@ -1129,6 +1190,7 @@ enum PluginFieldFlags
     PLUGIN_FIELD_NATIVE    = 1 << 0,
     PLUGIN_FIELD_CHECK     = 1 << 1,
     PLUGIN_FIELD_BITFIELD  = 1 << 2,
+    PLUGIN_FIELD_ANY_SIZE  = 1 << 3,   // v74: take the reflected size; size must be 0
 };
 
 // One build's value for a field. Passed in an array with no stride field, so
@@ -1159,7 +1221,7 @@ struct PluginFieldRequest
     const char* member;         // null = the size of className itself
 
     uint32_t    flags;          // PluginFieldFlags
-    uint32_t    size;           // sizeof the member as the plugin was compiled
+    uint32_t    size;           // sizeof the member as the plugin was compiled; 0 with PLUGIN_FIELD_ANY_SIZE = take the reflected size
     uint32_t    builtCL;        // the changelist the plugin's SDK was generated for
     int32_t     builtOffset;    // offsetof as compiled; -1 for a bitfield (its builtCL row holds it)
 
@@ -2307,6 +2369,18 @@ struct IPluginImGuiTextures
 // the pause menu is open or a game screen shows the cursor, and no window has
 // exclusive capture. Without it the window is click-through; child windows are not.
 #define PluginWindowFlags_PauseMenuMouseInputs (1 << 30)
+// v75, loader-only (ImGui never sees it): over the pause menu and the game's
+// other cursor screens, with no window holding exclusive capture, the widget
+// takes the mouse wherever no widget of the game's menu is under the cursor
+// and is click-through where one is, so the menu's buttons keep their clicks.
+// Without it (and without PauseMenuMouseInputs) the widget is click-through
+// there; with PauseMenuMouseInputs it takes the mouse everywhere, and that wins.
+// The loader reads the menu's hover once per tick, so a click right after the
+// cursor moves onto a menu button can still land on the widget. Where it cannot
+// tell (a screen that is not on the game's menu layer) the widget is click-through.
+// Child windows inside the widget are ImGui windows of their own and always
+// take the mouse.
+#define PluginWindowFlags_MenuMouseWhereUncovered (1 << 29)
 
 // Optional size/position hints for RegisterWidget windows.
 // Set width/height to 0 for no size hint. Set pos_x/pos_y to -1 to skip positioning.
@@ -2321,7 +2395,7 @@ struct PluginWindowHints
 	float pivot_y;
 	int   size_cond;
 	int   pos_cond;
-	int   extra_window_flags;  // v31: OR'd into ImGuiWindowFlags (except PauseMenuMouseInputs); 0 = default
+	int   extra_window_flags;  // v31: OR'd into ImGuiWindowFlags (except PauseMenuMouseInputs and MenuMouseWhereUncovered); 0 = default
 };
 
 struct PluginPanelDesc
@@ -2329,7 +2403,20 @@ struct PluginPanelDesc
 	const char* buttonLabel;
 	const char* windowTitle;
 	PluginImGuiRenderCallback renderFn;
+
+	// --- v75 ---
+	// Optional. Called every frame the panel is open, with the cursor on the
+	// title line right after the title text, inside the title bar the loader
+	// draws. Draw small buttons there with imgui->SameLine(0, -1) between them
+	// (SmallButton, Button, a glyph with SetItemTooltip). Ids are scoped to the
+	// title bar, so a label may repeat one in renderFn. Runs also while the
+	// panel is collapsed. Read only when the plugin declares interface 75 or
+	// later; a plugin built before leaves it out and the loader never looks.
+	PluginImGuiRenderCallback titleBarFn;
 };
+
+static_assert(offsetof(PluginPanelDesc, renderFn)   == 16, "v15 layout");
+static_assert(offsetof(PluginPanelDesc, titleBarFn) == 24, "v75 starts where v15 ended");
 
 typedef void* PanelHandle;
 typedef void* WidgetHandle;
@@ -2371,6 +2458,13 @@ struct IPluginUIEvents
 	// for plugins driving their UI via RegisterWidget (which does not
 	// trigger capture on its own). Returns an opaque token; input stays
 	// suppressed as long as at least one token (from any plugin) is held.
+	// Over the Escape menu and the game's other cursor screens the token does
+	// not suppress anything: the mouse is shared instead, so clicks, moves and
+	// the wheel outside the plugin's windows reach the game's menu, and a
+	// widget takes the mouse only with PluginWindowFlags_PauseMenuMouseInputs
+	// (everywhere) or PluginWindowFlags_MenuMouseWhereUncovered (v75, where no
+	// menu widget is under the cursor).
+	// A focused text field still keeps its keys from the game.
 	// Always call ReleaseInputCapture for every acquired token, including
 	// during PluginShutdown -- a leaked token permanently suppresses input
 	// until the modloader restarts.
@@ -2392,6 +2486,8 @@ struct IPluginUIEvents
 	//
 	// Exclusive capture wins: while any modloader window, plugin panel, or
 	// AcquireInputCapture token is active, passthrough tokens have no effect.
+	// (Over the Escape menu and other cursor screens a plugin panel or
+	// AcquireInputCapture token is not exclusive; see AcquireInputCapture.)
 	// Refcounted across all plugins; always release every acquired token,
 	// including during PluginShutdown.
 	void* (*AcquireInputPassthrough)();
@@ -2401,11 +2497,28 @@ struct IPluginUIEvents
 	// True while a loader or plugin window has exclusive input capture: the
 	// mod loader window, a console or profiler window, any open plugin panel,
 	// or an AcquireInputCapture token. The cursor is ImGui's and the game is
-	// frozen. Safe from any thread.
+	// frozen. Over the Escape menu and the game's other cursor screens a plugin
+	// panel or token does not count: it shares the mouse with the game instead,
+	// so this stays false for it there. Safe from any thread.
 	bool (*IsOverlayOpen)();
+
+	// --- v75 ---
+	// True while the panel is collapsed to its title bar. False for a null or
+	// stale handle. Safe from any thread.
+	bool (*IsPanelCollapsed)(PanelHandle handle);
+	// Collapse the panel to its title bar (true) or expand it again (false).
+	// A collapsed panel keeps its width, shows only the title bar (with the
+	// buttons titleBarFn draws and the close button) and does not call
+	// renderFn. Expanding restores the size it had before. Works while the
+	// panel is closed too: it then opens in that state. The state is kept for
+	// the session but not saved by the loader. Ignored for a null or stale
+	// handle. Safe from any thread; the window changes on the next frame.
+	void (*SetPanelCollapsed)(PanelHandle handle, bool collapsed);
 };
 
-static_assert(offsetof(IPluginUIEvents, IsOverlayOpen) == 120, "v71 starts where v70 ended");
+static_assert(offsetof(IPluginUIEvents, IsOverlayOpen)      == 120, "v71 starts where v70 ended");
+static_assert(offsetof(IPluginUIEvents, IsPanelCollapsed)   == 128, "v75 starts where v71 ended");
+static_assert(offsetof(IPluginUIEvents, SetPanelCollapsed)  == 136, "v75 layout");
 
 // ---------------------------------------------------------------------------
 // In-world debug drawing (v50, client only) -- hooks->HUD->DebugDraw
@@ -3237,11 +3350,12 @@ struct PluginGameMenuEntryDesc
 	void*                  userData;   // passed straight back to onClick
 };
 
-// v74. The game's UI state: bits of the uint64_t that GetUIState returns and
-// RegisterOnUIStateChanged reports. More than one is set at a time: the map
-// open in gameplay reads IN_GAMEPLAY | CURSOR_UP | ANY_MENU | MAP. A later
-// loader may add bits without a new interface version, so ignore bits you do
-// not know and never compare the whole state with a fixed value.
+// v74. The game's UI state: bits of the uint64_t that RegisterOnUIStateChanged
+// reports (GetUIState returns the first three only). More than one is set at
+// a time: the map open in gameplay reads IN_GAMEPLAY | CURSOR_UP | ANY_MENU |
+// MAP. A later loader may add bits without a new interface version, so
+// ignore bits you do not know and never compare the whole state with a
+// fixed value.
 enum PluginUIState : uint64_t
 {
 	// A gameplay world (ChimeraMain) has begun play and not ended. False at
@@ -3256,24 +3370,30 @@ enum PluginUIState : uint64_t
 	// bShowMouseCursor): the menus, the pause menu and the machine screens.
 	PLUGIN_UI_CURSOR_UP    = 1ull << 2,
 
-	// A screen is active on the game's menu layer: the map, the inventory,
-	// the build menu, a machine or station screen, the pause menu and the
-	// rest. The bits below name some of them; a screen without a bit of its
-	// own shows as ANY_MENU alone.
+	// A screen is on the game's menu layer: the map, the inventory, the build
+	// menu, a machine or station screen, the pause menu and the rest. The
+	// bits below name some of them; a screen without a bit of its own shows
+	// as ANY_MENU alone.
+	//
+	// The menu bits (this one and the four below) are set from the moment a
+	// screen is pushed until it is fully gone, close animation included: a
+	// screen that is closing still counts. They do not mean the screen is
+	// the active one, so a plugin that acts on a screen's widget checks that
+	// it is still active before it does.
 	PLUGIN_UI_ANY_MENU     = 1ull << 3,
 
-	// The active menu-layer screen is the map.
+	// The map is on the menu layer.
 	PLUGIN_UI_MAP          = 1ull << 4,
 
-	// The active menu-layer screen is the player's inventory.
+	// The player's inventory is on the menu layer.
 	PLUGIN_UI_INVENTORY    = 1ull << 5,
 
-	// The active menu-layer screen is the build menu.
+	// The build menu is on the menu layer.
 	PLUGIN_UI_BUILD_MENU   = 1ull << 6,
 
-	// The active menu-layer screen is a station's own: the corporate
-	// terminal, the development station or the equipment upgrade station.
-	// Other machines' screens show as ANY_MENU only.
+	// A station's own screen is on the menu layer: the corporate terminal,
+	// the development station or the equipment upgrade station. Other
+	// machines' screens show as ANY_MENU only.
 	PLUGIN_UI_STATION_MENU = 1ull << 7,
 };
 
@@ -3314,17 +3434,14 @@ struct IPluginGameMenu
 	bool (*IsPauseMenuOpen)();
 
 	// --- v74 ---
-	// The game's UI state as PluginUIState bits. Safe from any thread: one
-	// atomic read of the state as of the last game tick, so it lags by up to
-	// a frame.
+	// The game's UI state as PluginUIState bits: IN_GAMEPLAY, PAUSE_MENU and
+	// CURSOR_UP. Safe from any thread: one atomic read of the state as of the
+	// last game tick, so it lags by up to a frame.
 	//
-	// IN_GAMEPLAY, PAUSE_MENU and CURSOR_UP are kept all the time. The menu
-	// bits (ANY_MENU and the ones after it) are read from the game only while
-	// a plugin has a RegisterOnUIStateChanged callback for one of them, or has called
-	// GetUIState in the last two seconds; otherwise they are 0. So the first
-	// call after nobody has asked for a while starts that read, and its menu
-	// bits are 0 until the next game tick. A plugin that needs them from the
-	// first frame registers a callback instead.
+	// The menu bits (ANY_MENU and the ones after it) are never set here. The
+	// loader reads them from the game only while a plugin has a
+	// RegisterOnUIStateChanged callback for one of them; for the menu bits,
+	// register a callback.
 	uint64_t (*GetUIState)();
 
 	// Calls callback on the GAME THREAD whenever a bit in mask changes (pass

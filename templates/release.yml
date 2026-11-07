@@ -3,28 +3,37 @@
 # This calls the centralised release workflow from the StarRupture Plugin SDK.
 # It will automatically:
 #   - Generate a semantic version tag
-#   - Build your plugin (Client Release)
+#   - Build your plugin (Client Release, plus Server Release with server_build)
 #   - Create a per-plugin update manifest  (<PluginName>-client-manifest.json)
 #   - Bundle the DLL + sidecar JSON into a ZIP (<PluginName>-Client-vX.Y.Z.zip)
-#   - Publish a GitHub Release with all three assets
+#   - Publish a GitHub Release with all the assets
+#   - Upload the ZIP to Nexus Mods and update the page, when nexus_mod_id is set
 #
-# Replace the three values marked with TODO below, then delete these comments.
+# Replace the TODO values below, pin the SDK release tag, then delete these comments.
+# Run it with dry_run ticked to build and package without releasing anything.
 
 name: Build and Release
 
 on:
-  push:
-    branches:
-      - main
-    paths-ignore:
-      - '**/*.md'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Build and package only: no GitHub release, no Nexus upload'
+        type: boolean
+        default: false
 
 jobs:
   release:
-    uses: AlienXAXS/StarRupture-Plugin-SDK/.github/workflows/plugin-release.yml@main
+    permissions:
+      contents: write
+    uses: AlienXAXS/StarRupture-Plugin-SDK/.github/workflows/plugin-release.yml@TODO_SDK_RELEASE_TAG   # e.g. v1.23.0
     with:
       plugin_name: TODO_PluginName          # e.g. Compass_Plugin
       solution_file: TODO_PluginName.sln    # e.g. Compass_Plugin.sln
-      # variant: Client                     # omit for Client (default), set to Server if needed
+      # dll_name: TODO_PluginName_Plugin    # only when the built DLL is named differently
       # release_title: My Plugin            # omit to use plugin_name as title
+      # server_build: true                  # also build and release the Server variant
+      # nexus_mod_id: '0'                   # global (v3 API) mod id; omit to skip Nexus
+      # nexus_display_name: My Plugin       # omit to use plugin_name
+      dry_run: ${{ inputs.dry_run }}
     secrets: inherit

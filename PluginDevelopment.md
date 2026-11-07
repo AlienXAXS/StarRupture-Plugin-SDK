@@ -297,7 +297,7 @@ Hosted at the URL stored in the sidecar, fetched fresh on every boot:
 |-------|-------------|
 | `plugin_name` | Display name used in log messages |
 | `version` | Version string compared against `update_state.ini` to decide whether to download |
-| `interface_version_min` | Lowest interface version this build supports |
+| `interface_version_min` | The interface version this build reports (`PLUGIN_INTERFACE_VERSION`). A loader whose maximum is lower could not load this build, so it skips the update and keeps the copy that works |
 | `interface_version_max` | Highest interface version this build supports |
 | `download_url` | Direct URL to the DLL to download if an update is needed |
 
@@ -313,7 +313,8 @@ The reusable workflow [.github/workflows/plugin-release.yml](.github/workflows/p
    - `MyPlugin.dll` — the compiled plugin
    - `MyPlugin.json` — the sidecar pointing at the `latest/download` manifest URL
    - `MyPlugin.pdb` — PDB if present
-4. **Create GitHub Release** — three assets are uploaded: the bare DLL, the manifest JSON, and the ZIP. The ZIP is the intended install package for users.
+4. **Create GitHub Release** — three assets are uploaded: the bare DLL, the manifest JSON, and the ZIP. The ZIP is the intended install package for users. With `server_build: true` the Server variant gets the same three assets.
+5. **Nexus Mods** (only when `nexus_mod_id` is set) — the ZIP is uploaded, the page Version field and changelog entry are set from `UPDATE_NOTES.txt`, and `nexus/description.bbcode` replaces the page description when the file exists.
 
 A user who installs via the ZIP gets both the DLL **and** its sidecar. From that point on the modloader handles all future updates silently.
 
@@ -360,7 +361,7 @@ ManifestUrl=       ; override the compiled-in central manifest URL (optional)
 
 To opt into auto-updates for your plugin:
 
-1. Use the reusable workflow: add `.github/workflows/release.yml` to your plugin repo that calls `AlienXAXS/StarRupture-Plugin-SDK/.github/workflows/plugin-release.yml@main`.
+1. Use the reusable workflow: add `.github/workflows/release.yml` to your plugin repo that calls `AlienXAXS/StarRupture-Plugin-SDK/.github/workflows/plugin-release.yml` pinned to an SDK release tag (copy `templates/release.yml`). Tick `dry_run` to build and package without publishing.
 2. The workflow generates and publishes the manifest and sidecar automatically — no manual steps.
 3. Tell users to install from the ZIP. The sidecar inside it wires up future updates automatically.
 
@@ -717,8 +718,15 @@ if (scan->ResolveField(self, &req, &field))
 
 - **Reflected** (no flag): the offset comes from the game's reflection data, found by class (short
   name, or `/Script/<Module>.<Name>` when two modules share it) and member, in the class or its
-  supers. The member's size must equal `size`. A row for the running changelist must agree with
-  reflection, or the request fails; with no row, reflection alone answers.
+  supers. The member's size must equal `size`, unless the request sets `PLUGIN_FIELD_ANY_SIZE` (with
+  `size` 0): the loader then accepts the size the game reflects and returns it in
+  `PluginFieldResult::size`. Use that for a member whose type differs between game builds (a float
+  on one, a double on the next), and read it by the returned size, treating a size you do not handle
+  as the member being absent. A size of 0 without the flag is refused as a size mismatch, so a
+  request that forgot to set `size` fails instead of reading at any size; `PLUGIN_FIELD_ANY_SIZE`
+  is refused with `NATIVE`, `CHECK` or `BITFIELD`, on a size row, or with a non-zero `size`. A row
+  for the running changelist that disagrees with reflection is logged and reflection wins; with no
+  row, reflection alone answers.
 - **`PLUGIN_FIELD_NATIVE`**: a member reflection does not describe. The row for the running
   changelist answers, or `builtOffset` on `builtCL`. On any other build the request fails. The
   member must also lie inside its class as the game reflects the class (offset plus size within the
@@ -840,11 +848,65 @@ SDK::UWorld* world = PluginSdkRuntime::GetWorld();     // instead of SDK::UWorld
 | `PluginMap::Request(key, pattern, kind, ...)` | The request the helpers send, not sent, for adding `candidates` before you call `Resolve` yourself. |
 | `SR_FIELD(T, Class, Member, flags)` | A `PluginField<T>`: `In(object)` gives the member or null. `flags` takes `PLUGIN_FIELD_NATIVE` and `PLUGIN_FIELD_CHECK`. |
 | `SR_BITFIELD(Class, Member)` | A `PluginBitField`: `Get(object)` and `Set(object, value)`. |
+| `SR_FIELD_ANY_SIZE(Class, Member, flags)` | A `PluginFieldSpec` requested with `PLUGIN_FIELD_ANY_SIZE` (size 0), for a reflected member whose size differs between builds. After the request, `resolvedSize` holds the size the loader reports on the running build and `offset` where it is. |
 | `SR_SIZE_CHECK(Class)` | A checked class size: the request fails on a build where the class's size changed. |
+| `SR_SIZE(Class)` | An unchecked class size: `resolvedSize` holds the size the game reflects on the running build. Step through an array with it using `PluginMap::ElementAt` (see [Struct sizes: live or checked](#struct-sizes-live-or-checked)). 0 = not resolved. |
+| `PluginMap::ElementAt(array, index, size)` | The address of element `index` of a game `TArray` (or, with `ElementAt(data, count, index, size)`, of a buffer), stepped by the `SR_SIZE` row's `resolvedSize`, not a `sizeof`. Null when the array is empty, `index` is out of range or the size did not resolve. |
+| `PluginMap::EnumValue(enumName, entry, value)` | A game enum entry's number, read by name from the running game's `UEnum`: `Found` (written to `value`), `EntryMissing` or `EnumMissing`. Game thread only; look it up once and keep it. |
 | `PluginMap::ResolveFields(scan, self, fields...)` | `ResolveField` for each, every one asked even after a failure, so the log lists them all. Sends `PLUGIN_GAME_BUILT_CL` as `builtCL`. True when all resolved. |
 | `PluginVersionMap::Attach(request)`, `PluginVersionMap::ResolveFields(...)` | `plugin_version_map.h`: the same with your generated rows for the key and its `kBuiltCL`. |
 | `PluginSdkRuntime::Init(self->hooks)`, `GetWorld()`, `Globals()` | Points your copy of the SDK's `GObjects` and `FName::AppendString` at the running build's, from `GetSdkGlobals`. `GetWorld()` replaces `SDK::UWorld::GetWorld()`: it gives the game viewport's world, not `GWorld` (see [GetWorld](#getworld-the-viewports-world)). Game thread only. |
 | `PluginLazyField<T>{ "Member" }` | A member the plugin can live without: a Blueprint (`_C`) member, which has no SDK offset, or a native member whose feature turns off when it is missing. `In(hooks->ObjectProperties, object)` looks it up by name on first use, checks its size against `sizeof(T)` and caches the offset per class; null when it is not there. Game thread only. |
+
+#### Struct sizes: live or checked
+
+A struct's size on a game build is whatever the game's reflection says, so the loader can answer
+it for any build. What a plugin does with the size decides which row to ask for.
+
+- **Only stepping through an array** of the struct, reading each element through resolved member
+  offsets: use `SR_SIZE(FStruct)` and `PluginMap::ElementAt`. The size is the running build's, so a
+  build that adds a member to the struct does not turn the plugin off, and a plugin that never
+  indexes with `sizeof` cannot step into the wrong bytes.
+- **Anything that bakes the compiled layout into code**: use `SR_SIZE_CHECK(FStruct)`. That is a
+  copy of the struct by value, a `ProcessEvent` parameter block or return value, a buffer you hand
+  to a native function to fill, and a `TMap` or `TArray` of the struct that the compiled code
+  indexes. The loader cannot change compiled code, so the request fails on a build where the size
+  moved, and the feature turns off instead of reading the wrong bytes.
+
+```cpp
+static auto g_skillSize = SR_SIZE(FCrSkillData);        // stepped through: the live size
+static auto g_paramsSize = SR_SIZE_CHECK(FCrEnviroWaveSettings);   // returned by value: checked
+...
+PluginMap::ResolveFields(scan, self, g_skillSize, g_paramsSize);
+...
+for (int32_t i = 0; i < skills.Num(); ++i)
+    if (const uint8_t* skill = PluginMap::ElementAt(skills, i, g_skillSize))
+        UseSkill(skill + g_skillLevel.offset);
+```
+
+Typed `TArray<SDK::FStruct>` indexing in the same code is compiled with the old size, so do not mix
+it with a live size. The [rule 3 check](#rule-3-check----no-direct-reads-of-game-members) judges
+each site: a `TArray<SDK::FStruct>` variable that is only passed to `PluginMap::ElementAt`
+(with the `SR_SIZE` spec) or asked `Num()` is fine, but any other use of it (`arr[i]`, `GetData() + i`)
+still asks for `SR_SIZE_CHECK`, however many other places in the file step by the live size.
+
+##### Game enums by name
+
+The numbers of a game enum can change in an update, and its entry names are what the game saves.
+`PluginMap::EnumValue` reads an entry's number from the running game's `UEnum` by name:
+
+```cpp
+int64_t deconstruct = 0;
+switch (PluginMap::EnumValue("ECrPlayerControlState", "DeconstructMode", deconstruct))
+{
+case PluginMap::EnumLookup::Found:        break;               // use `deconstruct`
+case PluginMap::EnumLookup::EntryMissing: /* log once, skip the path that needs it */ break;
+case PluginMap::EnumLookup::EnumMissing:  /* the enum is not loaded (yet): try again later */ break;
+}
+```
+
+It reads UObjects, so it runs on the game thread only, and it walks every loaded object, so call
+it once when the feature first runs and keep the value. `value` is written only on `Found`.
 
 #### GetWorld: the viewport's world
 
@@ -1485,6 +1547,22 @@ if (hooks->UI && g_panel) {
 }
 ```
 
+**Title-bar buttons and collapse (v75).** `PluginPanelDesc::titleBarFn` is an optional callback the loader runs inside the title bar it draws for the panel, right after the title text, so the plugin can put its own small buttons there. The cursor is already on the title line: draw with the usual `SameLine`, and ids are scoped to the title bar, so a label may repeat one used in `renderFn`. It also runs while the panel is collapsed. `IPluginUIEvents::IsPanelCollapsed` and `SetPanelCollapsed` collapse a panel to its title bar (it keeps its width and does not call `renderFn`); expanding restores the size it had. The loader does not save the collapsed state, so a plugin that wants it kept saves it in its own config and calls `SetPanelCollapsed` after `RegisterPanel`.
+
+```cpp
+static void DrawTitleBarButtons(IModLoaderImGui* imgui) {
+    imgui->SameLine(0, -1);
+    if (imgui->SmallButton(g_collapsed ? "+" : "-")) {
+        g_collapsed = !g_collapsed;
+        hooks->UI->SetPanelCollapsed(g_panel, g_collapsed);
+    }
+}
+
+static PluginPanelDesc desc = { "My Plugin", "My Plugin Panel", &RenderMyPanel, &DrawTitleBarButtons };
+```
+
+The loader reads `titleBarFn` only from a plugin that declares interface 75 or later, so a plugin built before leaves the field out and is never read past its end. A v74 loader refuses a v75 plugin.
+
 **Widgets** are always-on ImGui windows rendered every frame regardless of whether the modloader window is open:
 
 ```cpp
@@ -1522,6 +1600,8 @@ if (hooks->UI && g_widget) {
     g_widget = nullptr;
 }
 ```
+
+**Mouse over the game's menus.** Over the Escape menu and the game's other cursor screens a widget is click-through by default, and `PluginWindowFlags_PauseMenuMouseInputs` makes it take the mouse everywhere it is drawn. From v75, `PluginWindowFlags_MenuMouseWhereUncovered` (in `extra_window_flags`) makes it take the mouse only where no widget of the game's menu is under the cursor: the menu's buttons stay clickable under the widget and the rest of the widget stays usable. The loader asks the game once per tick, so the answer can be a frame old. `PauseMenuMouseInputs` wins when both are set. A loader older than v75 ignores the bit and the widget stays click-through there.
 
 **Config change notifications** let your plugin react when the user edits values in the modloader UI:
 
@@ -2832,8 +2912,13 @@ The loader accepts plugins whose `interfaceVersion` is in `[PLUGIN_INTERFACE_VER
 | v70     | **yes**     | **Mouse wheel input, and `FreeTexture` made safe to call at any time.** Added `PluginWheelModifiers`, `PluginMouseWheelEvent`, `PluginMouseWheelCallback` and `IPluginInputEvents::RegisterMouseWheel` / `UnregisterMouseWheel` (appended at the bottom of `IPluginInputEvents`). Handlers see the wheel during normal gameplay -- not only while a ModLoader window has capture, which is all `GetMouseWheel` could offer -- with sided modifiers, raw and notch deltas for both axes and the cursor position, and can return `true` to consume the event so the game never sees it. Handlers run on the game thread in registration order; the first `true` stops the chain; registrations are dropped on unload/reload. See [hooks->Input](#hooks-input). **Behaviour change (loader-side, reaches older plugins too):** `IPluginImGuiTextures::FreeTexture` now retires the texture -- it stops drawing at once, and the resource and slot are released only after the GPU has finished every frame that could have drawn them. Freeing on the spot raced the render thread and could GPU-fault. A freed slot becomes reusable a frame or two later. See [hooks->ImGuiTextures](#hooks-imguitextures). The additions themselves are layout-safe, but MIN was then raised to 70, so **every plugin must be rebuilt against the v70 header**. |
 | v71     | no          | **Read-only UI state and two config entry types.** Added `IPluginGameMenu::IsPauseMenuOpen`, `IPluginUIEvents::IsOverlayOpen`, `IModLoaderImGui::IsKeyPressed` (a Win32 virtual-key code, readable while a text field has focus), `PluginWindowFlags_PauseMenuMouseInputs` (a widget that takes the mouse while the pause menu is open), and `ConfigValueType::Choice` / `ConfigValueType::Hidden` (see [Config System](#config-system-plugin_configh-pattern)). Appended at the bottom of each struct or enum: MIN remains 70. |
 | v72     | no          | **Per-build locators, field requests and the Game-SDK globals**, so one plugin build can run on several game builds. Added `PluginScanCandidate` and, appended to `PluginScanRequest`, `candidates` / `candidateCount`: the locators a plugin knows for one hookName on other game builds. The loader uses the row for the running changelist; with none, it accepts only an address every locator that matches agrees on (see [Locators for other game builds](#locators-for-other-game-builds)). Added `PluginFieldRequest`, `PluginFieldCandidate`, `PluginFieldResult` and `IPluginHookScanner::ResolveField` (the offset of a game-class member on the running build), and `PluginSdkGlobals` / `IPluginEngineEvents::GetSdkGlobals`. Added `PLUGIN_SCAN_FLAG_MAP_KEY`: `hookName` names a key in the loader's own version map, and `pattern` and `candidates` become the plugin's fallback (see [Map keys](#map-keys-plugin_scan_flag_map_key)). Added `IPluginInputEvents::IsKeyHeld` (polls a keybind name; aware of window focus and text fields; see [hooks->Input](#hooks-input)) and `IPluginEngineEvents::IsGameThread` (see [hooks->Engine](#hooks-engine)). The SDK's `plugin_map.h` and `plugin_version_map.h` fill these requests (see [SDK helpers](#sdk-helpers-plugin_maph-plugin_version_maph)). Its own version because v71 loaders exist without these slots: a v71 loader refuses a v72 plugin and lists it as **Needs loader**, instead of letting it call past the end of a table. MIN remains 70. |
+| v73     | no          | **Features, and load/unload settings.** Added `IPluginHookScanner::DeclareFeature` and `PluginFeatureDesc`: a miss on a feature's key turns that feature off instead of refusing the plugin. A plugin states when it may be loaded and unloaded while the game runs (`PluginLoadSetting` / `PluginUnloadSetting` in `PluginInfo::mapFlags`) and can mark itself busy with `IPluginEngineEvents::SetBusyReason`. MIN remains 70. |
+| v74     | no          | **Size the next ImGui window, the game's UI state, and a reflected size.** Added `IModLoaderImGui::SetNextWindowSize` / `SetNextWindowSizeConstraints` and the `PluginWindowFlags_AlwaysAutoResize` / `PluginCond_*` constants (appended at the bottom of `IModLoaderImGui`), `PluginUIState` with `IPluginGameMenu::GetUIState` / `RegisterOnUIStateChanged` / `UnregisterOnUIStateChanged`, and `PLUGIN_FIELD_ANY_SIZE`, a flag on a reflected `PluginFieldRequest` that takes whatever size the game reflects. MIN remains 70. |
+| v75     | no          | **Panel title-bar buttons and collapse, and mouse over the game's menus.** `PluginPanelDesc` gained `titleBarFn` (appended at the end), an optional callback run inside the title bar the loader draws for the panel. `IPluginUIEvents` gained `IsPanelCollapsed` and `SetPanelCollapsed` (appended at the bottom). Added `PluginWindowFlags_MenuMouseWhereUncovered`, a loader-only widget flag that takes the mouse only where no widget of the game's menu is under the cursor. See [hooks->UI](#hooks-ui). The loader reads `titleBarFn` only from a plugin that declares 75 or later; a v74 loader refuses a v75 plugin. MIN remains 70. |
 
-The current `PLUGIN_INTERFACE_VERSION_MIN` is **70** and `PLUGIN_INTERFACE_VERSION_MAX` is **72** (see `plugin_interface.h` for the authoritative value and full per-version changelog comments).
+The current `PLUGIN_INTERFACE_VERSION_MIN` is **70** and `PLUGIN_INTERFACE_VERSION_MAX` is **75** (see `plugin_interface.h` for the authoritative value and full per-version changelog comments).
+
+A plugin built against these headers declares **75** by default (`PLUGIN_INTERFACE_VERSION`). Loader 1.23.0 accepts 70 through 75, so a plugin that uses nothing from v75 may still declare 74. A loader before 1.23.0 refuses a plugin newer than its maximum and shows it as needing a newer mod loader.
 
 ---
 
