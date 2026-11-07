@@ -12,6 +12,10 @@
     { "names": ["CommonUI", "CommonGame", "CommonInput", "CommonUser"], "reason": "Epic's Common UI and Common Game plugins (activatable widgets, the UI policy and layouts), not the game's own code" }
   ],
   "exceptions": [
+    { "plugin": "BetterDrone", "file": "src/drone_laser.cpp", "kind": "sizeof", "what": "alignof(FCrInfiniteOreData)", "reason": "alignment input to ScriptMapView; validated at run time, fails closed; replaced by live UStruct::MinAlignment (map-gaps M1)" },
+    { "plugin": "BetterDrone", "file": "src/drone_map_marker.cpp", "kind": "sizeof", "what": "alignof(FEntityMarkerUIRepresentation)", "reason": "alignment input to ScriptMapView; validated at run time, fails closed; replaced by live UStruct::MinAlignment (map-gaps M1)" },
+    { "plugin": "CameraControls", "file": "src/camera_rig.cpp", "kind": "sizeof", "what": "alignof(FCrContextualInputBinding)", "reason": "alignment input to ScriptMapView; validated at run time, fails closed; replaced by live UStruct::MinAlignment (map-gaps M1)" },
+    { "plugin": "CameraControls", "file": "src/world_func.cpp", "kind": "sizeof", "what": "alignof(FCrEnviroWaveSettings)", "reason": "alignment input to ScriptMapView; validated at run time, fails closed; replaced by live UStruct::MinAlignment (map-gaps M1)" },
     { "plugin": "BetterCheats", "file": "BetterCheats/aob_patterns.h", "kind": "offset", "what": "kHeatGateJumpOffset", "reason": "byte distance into a matched code pattern (a code-shape check), not a game member offset" },
     { "plugin": "BetterCheats", "file": "BetterCheats/player_inventory.cpp", "kind": "offset", "what": "kUFunctionParmsSizeOffset", "reason": "UFunction::ParmsSize, a uint16 the SDK pads (Pad_B4): core engine layout, kept compiled on purpose" },
     { "plugin": "BetterCheats", "file": "BetterCheats/player_inventory.cpp", "kind": "offset", "what": "kUFunctionNumParmsOffset", "reason": "UFunction::NumParms, a uint8 the SDK pads (Pad_B4): core engine layout, kept compiled on purpose" },

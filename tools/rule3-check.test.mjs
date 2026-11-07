@@ -167,6 +167,36 @@ test('applyAllow matches file by path suffix and plugin', () => {
   assert.equal(applyAllow([f], { exceptions: [allow.exceptions[0]] }, 'Fake').kept.length, 1);
 });
 
+test('an allow entry matches from any checkout path (repo-relative)', () => {
+  const f = fixture({});
+  try {
+    // two checkouts of one repo at different depths, each with a .git entry
+    for (const dir of ['checkout', join('wt', 'deep', 'checkout')]) {
+      const repo = join(f.root, dir);
+      mkdirSync(join(repo, 'src'), { recursive: true });
+      writeFileSync(join(repo, '.git'), 'gitdir: elsewhere');
+      writeFileSync(join(repo, 'src', 'a.cpp'), 'constexpr int kThingOffset = 0x2998;');
+      writeFileSync(f.allowFile, JSON.stringify({ ...ALLOW, exceptions: [{ plugin: 'Fake', file: 'src/a.cpp', kind: 'offset', what: 'kThingOffset', reason: 'engine layout' }] }));
+      for (const source of [repo, join(repo, 'src')]) {
+        const r = check({ plugin: 'Fake', sdkDir: f.sdk, sources: [source], allowFile: f.allowFile, mode: 'report' });
+        assert.deepEqual(r.findings, [], source);
+        assert.equal(r.allowed.length, 1, source);
+        assert.equal(r.allowed[0].file, 'src/a.cpp');
+      }
+    }
+  } finally { f.done(); }
+});
+
+test('an alignof allow entry carries kind, what and a reason, and matches only its file', () => {
+  const entry = { plugin: 'Fake', file: 'a.cpp', kind: 'sizeof', what: 'alignof(FCrItem)', reason: 'alignment input; fails closed' };
+  const allow = { ...ALLOW, exceptions: [entry] };
+  const body = 'size_t x = alignof(SDK::FCrItem);';
+  const ok = run({ 'a.cpp': body }, { allow });
+  assert.deepEqual(ok.findings, []);
+  assert.equal(ok.allowed[0].reason, 'alignment input; fails closed');
+  assert.equal(run({ 'b.cpp': body }, { allow }).findings.length, 1);
+});
+
 test('comments and strings are not scanned', () => {
   const r = run({ 'a.cpp': [
     '// h->CurrentHealth',
