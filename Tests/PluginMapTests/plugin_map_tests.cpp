@@ -314,7 +314,9 @@ static void TestParamMacros()
 
 	Check(std::strcmp(size.key, "Widget_Resize") == 0 && std::strcmp(size.className, "Widget_Resize") == 0 && size.member == nullptr,
 		"the size row is the parameter struct's name");
-	Check((size.flags & (PLUGIN_FIELD_CHECK | PLUGIN_FIELD_NATIVE | PLUGIN_FIELD_BITFIELD | PLUGIN_FIELD_ANY_SIZE)) == 0, "and carries no flag");
+	Check((size.flags & (PLUGIN_FIELD_CHECK | PLUGIN_FIELD_NATIVE | PLUGIN_FIELD_BITFIELD | PLUGIN_FIELD_ANY_SIZE)) == 0, "and carries no check, native, bitfield or size flag");
+	Check((size.flags & PLUGIN_FIELD_LATE) != 0 && (inSize.flags & PLUGIN_FIELD_LATE) != 0 && (ret.flags & PLUGIN_FIELD_LATE) != 0,
+		"the size row and the parameters may wait for a Blueprint class");
 	Check(size.size == sizeof(SDK::Params::Widget_Resize), "the compiled size is recorded");
 	Check(std::strcmp(ret.key, "Widget_Resize::ReturnValue") == 0 && std::strcmp(ret.className, "Widget_Resize") == 0
 		&& std::strcmp(ret.member, "ReturnValue") == 0, "a parameter is keyed by struct and member");
@@ -341,6 +343,58 @@ static void TestParamMacros()
 	Check(!PluginMap::ParamsBlockOf(size, { nullptr }), "a null row is invalid");
 	PluginFieldSpec unresolvedSize = SR_PARAMS_SIZE(Widget, Resize);
 	Check(!PluginMap::ParamsBlockOf(unresolvedSize, { &ret }), "an unresolved block size is invalid");
+}
+
+// A Blueprint class the game has not loaded yet: the loader answers false (pending)
+// until g_classLoaded, then the numbers, and counts the requests it was asked.
+static bool g_classLoaded = false;
+static int  g_lateAsks = 0;
+static bool PendingResolve(const IPluginSelf* self, const PluginFieldRequest* request, PluginFieldResult* result)
+{
+	++g_lateAsks;
+	if (!g_classLoaded)
+		return false;
+	return ParamResolve(self, request, result);
+}
+
+static void TestLateParams()
+{
+	printf("ResolveLateFields: pending until the class loads\n");
+	PluginFieldSpec size   = SR_PARAMS_SIZE(Widget, Resize);
+	PluginFieldSpec inSize = SR_PARAM(Widget, Resize, InSize);
+	PluginFieldSpec ret    = SR_PARAM(Widget, Resize, ReturnValue);
+
+	IPluginHookScanner scanner{};
+	scanner.ResolveField = &PendingResolve;
+
+	g_classLoaded = false;
+	g_lateAsks = 0;
+	Check(!PluginMap::ResolveFields(&scanner, nullptr, size, inSize, ret), "at load the class is not there: the rows do not resolve");
+	Check(!PluginMap::IsResolved(size) && !PluginMap::IsResolved(inSize) && !PluginMap::IsResolved(ret), "and none is marked resolved");
+	Check(!PluginMap::ParamsBlockOf(size, { &inSize }), "so the block is invalid: the feature stays off");
+	Check(!PluginMap::ResolveLateFields(&scanner, nullptr, size, inSize, ret) && g_lateAsks == 6, "a late call still pending asks every row again and says so");
+
+	g_classLoaded = true;
+	g_lateAsks = 0;
+	Check(PluginMap::ResolveLateFields(&scanner, nullptr, size, inSize, ret), "once the class is loaded the late call resolves them all");
+	Check(PluginMap::IsResolved(size) && size.resolvedSize == 0x20 && ret.offset == 0x18, "with the live numbers");
+	PluginMap::ParamsBlock block = PluginMap::ParamsBlockOf(size, { &inSize, &ret });
+	Check(static_cast<bool>(block) && block.Size() == 0x20, "and the block is valid");
+
+	// The class is freed again: the numbers stay and nothing asks the loader.
+	g_classLoaded = false;
+	g_lateAsks = 0;
+	Check(PluginMap::ResolveLateFields(&scanner, nullptr, size, inSize, ret) && g_lateAsks == 0, "resolved rows are not asked again");
+	Check(static_cast<bool>(PluginMap::ParamsBlockOf(size, { &inSize, &ret })), "and the block stays valid with the class unloaded");
+
+	// A row that resolved alone is not asked again; the pending one is.
+	PluginFieldSpec size2   = SR_PARAMS_SIZE(Widget, Resize);
+	PluginFieldSpec inSize2 = SR_PARAM(Widget, Resize, InSize);
+	g_classLoaded = true;
+	PluginMap::ResolveField(&scanner, nullptr, size2);
+	g_classLoaded = false;
+	g_lateAsks = 0;
+	Check(!PluginMap::ResolveLateFields(&scanner, nullptr, size2, inSize2) && g_lateAsks == 1, "only the pending row is asked");
 }
 
 static void TestLayouts()
@@ -714,6 +768,7 @@ int main()
 	TestBuffer();
 	TestParamsBlock();
 	TestParamMacros();
+	TestLateParams();
 	TestLayouts();
 	TestMapWalk();
 	TestWalkFailsClosed();

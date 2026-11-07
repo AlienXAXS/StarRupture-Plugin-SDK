@@ -201,13 +201,24 @@ struct PluginBitField : PluginFieldSpec
 // `resolvedSize`; a function name more than one class has, or none, is refused.
 // Hand it to PluginMap::ParamsBlockOf with SR_PARAMS_SIZE. Needs a loader
 // carrying feat/param-offsets.
+//
+// Class may be a Blueprint generated class (WBP_InventorySlot_C, the name ends
+// in _C). Only parameters count, not the locals of the Blueprint function. Such
+// a class is loaded by the game with the screen that uses it, so it is normally
+// not loaded when plugins load: the row then does not resolve yet (the key is
+// pending, not refused) and the feature that lists it is off until
+// PluginMap::ResolveLateFields resolves it from the game thread. That needs a
+// loader with PLUGIN_FIELD_LATE (interface v75, the loader after 1.23.1 that
+// carries it); an older loader refuses a Blueprint class, so the feature stays
+// off there. A native class is resolved as before.
 #define SR_PARAM(Class, Function, Param) \
-    PluginFieldSpec{ #Class "_" #Function "::" #Param, #Class "_" #Function, #Param, PLUGIN_FIELD_ANY_SIZE, 0, \
+    PluginFieldSpec{ #Class "_" #Function "::" #Param, #Class "_" #Function, #Param, PLUGIN_FIELD_ANY_SIZE | PLUGIN_FIELD_LATE, 0, \
                      static_cast<int32_t>(offsetof(SDK::Params::Class##_##Function, Param)) }
 // The size of a UFunction's parameter block (its ParmsSize) on the running game,
-// in `resolvedSize`. The compiled size is recorded but not compared.
+// in `resolvedSize`. The compiled size is recorded but not compared. A Blueprint
+// class is pending until loaded, as for SR_PARAM.
 #define SR_PARAMS_SIZE(Class, Function) \
-    PluginFieldSpec{ #Class "_" #Function, #Class "_" #Function, nullptr, PLUGIN_FIELD_FLAG_NONE, \
+    PluginFieldSpec{ #Class "_" #Function, #Class "_" #Function, nullptr, PLUGIN_FIELD_LATE, \
                      sizeof(SDK::Params::Class##_##Function), -1 }
 
 namespace PluginMap
@@ -247,6 +258,32 @@ namespace PluginMap
         static_assert((std::is_base_of_v<PluginFieldSpec, Fields> && ...), "ResolveFields takes PluginField, PluginBitField and SR_SIZE_CHECK rows");
         bool all = true;
         ((all = ResolveField(scanner, self, fields) && all), ...);
+        return all;
+    }
+
+    // Whether the loader has set the row: a member by its offset, a size row by
+    // its size.
+    inline bool IsResolved(const PluginFieldSpec& field)
+    {
+        return field.offset >= 0 || field.resolvedSize != 0;
+    }
+
+    // Asks again for the rows that are still pending, for a feature that lists
+    // a Blueprint class's function (SR_PARAM, SR_PARAMS_SIZE with a _C class).
+    // Call it from the game thread, e.g. once a tick until it returns true: a
+    // request made off the game thread stays pending, and the loader looks at
+    // the game's objects at most every two seconds per key, and not at all once
+    // the key has resolved, so a call per tick is cheap. Keep the scanner
+    // pointer from OnPluginLoadHooks for it: this is the one scanner call that
+    // is still allowed after that returns. Rows already resolved are not asked
+    // again. True when every row is resolved; set the feature's own enabled flag
+    // then, and clear it never (the numbers hold for the process).
+    template <class... Fields>
+    bool ResolveLateFields(IPluginHookScanner* scanner, const IPluginSelf* self, Fields&... fields)
+    {
+        static_assert((std::is_base_of_v<PluginFieldSpec, Fields> && ...), "ResolveLateFields takes PluginField rows");
+        bool all = true;
+        ((all = (IsResolved(fields) || ResolveField(scanner, self, fields)) && all), ...);
         return all;
     }
 }
