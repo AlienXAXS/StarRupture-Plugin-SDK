@@ -74,7 +74,8 @@ const uint8_t* result = block.Param("ReturnValue");
 This works for native functions and for Blueprint functions (class names ending `_C`; only
 parameters count, not locals). A Blueprint class is not loaded when plugins start, so its rows
 stay pending and the feature stays off until you call `PluginMap::ResolveLateFields` from the
-game thread.
+game thread (for example once per tick, until it returns true). List the key in a declared
+feature (section 5): a pending key that no feature lists refuses the plugin.
 
 ## 3. Get the CI row for each key
 
@@ -84,20 +85,24 @@ that means a pull request; nothing is picked up automatically.
 - **Function or global:** add your plugin's rows for the build you tested to the loader's
   `hooks/game/version_map.generated.h`, and add your plugin to the `plugins` input of
   starrupture-ci's `sr-client-check.yml`. CI then scans it on every new build.
-- **Member or struct size:** add a line to starrupture-ci's `ci/native-keys.txt`, plus a row in
-  `kFieldRows` for the build you tested.
+- **Native member, or the size of a plain C++ struct:** add a line to starrupture-ci's
+  `ci/native-keys.txt`, plus a row in `kFieldRows` for the build you tested.
 
 ```
-MiniMap UTexture::SRGB optional        # <plugin> <Class::Member> [optional]
-MyPlugin FMyStruct 0x40                # <plugin> <ClassName> [size]: a struct size
+MiniMap UTexture::SRGB optional
+MyPlugin FMyStruct
 ```
 
-Mark a line `optional` if the plugin runs without that key. Reflected members and parameters
-(`SR_PARAM`, `SR_PARAMS_SIZE`) are read live from the game and need no row.
+A line is `<plugin> <Class::Member>`, or `<plugin> <ClassName>` for a struct size. After the key it
+may give `<offset> <size> <mask>` in hex (only when the PDB's size is not the one your plugin was
+built with), then `optional` if the plugin runs without that key. The header of the file has the
+full format.
 
-For builds from before your key existed, CI has no row. A function key then falls back to the
-nearest earlier build's row when your pattern still matches; a native member has no such
-fallback.
+Reflected members, structs the game reflects, and parameters (`SR_PARAM`, `SR_PARAMS_SIZE`) are
+read live from the game and need no line and no row.
+
+For builds from before your key existed, CI has no row. A function key can still resolve (section
+5); a native member cannot.
 
 ## 4. Read the value through the API
 
@@ -107,10 +112,13 @@ fallback.
 | `SR_FIELD`, `SR_BITFIELD`, `SR_SIZE_CHECK` | an offset / a size check | v72 |
 | `SR_SIZE` | the live struct size, in `resolvedSize` | v72 |
 | `SR_FIELD_ANY_SIZE` | offset and live member size | v74 |
-| `SR_NATIVE_ANY_SIZE` | the same for a native member | a loader with `feat/native-any-size` |
-| `SR_PARAMS_SIZE`, `SR_PARAM`, `PluginMap::ParamsBlockOf` | live parameter layout | a loader with `feat/param-offsets` |
-| the same on a Blueprint class | pending, then live | v75 and `PLUGIN_FIELD_LATE` |
+| `SR_NATIVE_ANY_SIZE` | the same for a native member | the first loader release after v1.23.1 |
+| `SR_PARAMS_SIZE`, `SR_PARAM`, `PluginMap::ParamsBlockOf` | live parameter layout | the first loader release after v1.23.1 |
+| the same on a Blueprint class | pending, then live | the first loader release after v1.23.1 (`PLUGIN_FIELD_LATE`) |
 | `PluginMap::Feature`, `DeclareFeatures` | one feature off, not the plugin | v73 |
+
+Interface v72 to v75 all ship in loader v1.23.0. An older loader refuses a plugin that needs a
+newer interface. It ignores `PLUGIN_FIELD_LATE`, so a Blueprint class stays refused there.
 
 Resolve everything once, in `OnPluginLoadHooks`:
 
@@ -121,8 +129,9 @@ PluginMap::ResolveFields(scanner, self, g_claim, g_size, g_ret);
 ## 5. When a row is missing
 
 The loader tries, in order:
-- **Function:** the row for the running build, the pattern you passed, then the latest earlier
-  row that still matches.
+- **Function:** the row for the running build decides on its own. With no such row, the loader
+  rescans the pattern of the latest earlier build's row on this build. That result, your pattern
+  and your own rows must all resolve to the same address; two different addresses fail the key.
 - **Reflected member:** the row, then the game's own reflection.
 - **Native member:** the row for the running build only. No row means refusal.
 

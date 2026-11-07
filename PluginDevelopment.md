@@ -468,17 +468,9 @@ Config files are stored in `Plugins/config/<PluginName>.ini`.
 
 ### Pattern Scanning -- OnPluginLoadHooks / IPluginHookScanner
 
-**v62 moved pattern scanning into its own load phase.** There is no `IPluginSelf::scanner`; the
-only `IPluginHookScanner` a plugin ever sees is the one passed to the optional
-`OnPluginLoadHooks` export, and every function in that table refuses a call made outside the
-event. Stashing the pointer and scanning from `PluginInit` or a tick does not work -- that is the
-point, not a side effect.
-
-The reason: a plugin used to resolve its AOBs from `PluginInit`, long after the loader had
-finished its own preflight and installed its own hooks. A plugin whose pattern stopped matching
-after a game update loaded anyway and then either did nothing or wrote a detour over whatever now
-lived at the address it guessed -- and neither the loader nor the user found out until something
-behaved strangely mid-session.
+Pattern scanning has its own load phase. The only `IPluginHookScanner` a plugin sees is the one
+passed to the optional `OnPluginLoadHooks` export, and every call outside that event is refused.
+Resolve there, install hooks from `PluginInit`.
 
 ```cpp
 extern "C" __declspec(dllexport)
@@ -503,27 +495,18 @@ verdict: a plugin that asked the loader for an address and did not get it is run
 build it was not made for, and which half of it still works is not a question the loader or the
 user can answer.
 
-`self->hooks` is **null for the whole event**, deliberately. Resolve here, install from
-`PluginInit`. A plugin that registered a callback or wrote a detour during the event would be left
-with a pointer into a freed module the moment a later pattern missed.
+`self->hooks` is **null** during the event. Plugins that do not scan do not export
+`OnPluginLoadHooks`.
 
-Plugins that do not scan simply do not export `OnPluginLoadHooks`.
+#### A pattern must be unique and the right kind (v68)
 
-#### v68: a pattern must be unique, and it must be what you said it is
+Both rules refuse the plugin and have no opt-out. They apply to plugins built against older headers
+too.
 
-Two rules were added in v68. **Both refuse the plugin, and neither has an opt-out.** They apply to
-plugins built against older headers too, because they live in the loader rather than in the ABI --
-so a plugin that has worked for months can start being refused after a game update. That is the
-intent: it was already resolving to an address nobody had checked.
+**1. Exactly one match.** Two matches is not an address.
 
-**1. Exactly one match.** Two matches is not an address, it is a coin flip. Before v68 the first
-match won silently, and the offset was then written into `scan_cache.ini` -- so a pattern that
-stopped being unique after a game update resolved to whichever copy sat lower in the image, on
-every launch, with nothing looking wrong until something misbehaved mid-session.
-
-**2. The address must be the right KIND of thing.** A pattern that lands 0x37 bytes inside an
-unrelated function still "matches". Declaring what you expect lets the loader check it against the
-executable's own structure before handing the address back.
+**2. The address must be the right kind of thing.** Declare what you expect and the loader checks
+it against the executable's own structure.
 
 ```cpp
 extern "C" __declspec(dllexport)
@@ -581,16 +564,8 @@ symbol name is appended too.
 
 #### Scans see the game as it shipped
 
-You do not have to think about the loader's own hooks. By the time your `OnPluginLoadHooks` runs,
-the loader has already stamped a 14-byte JMP over the entry of `UObject::ProcessEvent`,
-`AActor::BeginPlay`, `UGameEngine::Tick` and two dozen more -- which is exactly the set you are
-most likely to want -- and other plugins may have patched more.
-
-The scanner reads through all of it, so a resolve answers the same question your disassembler did:
-a pattern anchored on a hooked function's entry still matches, and a pattern containing
-`FF 25 00 00 00 00` does not start matching the loader's own stubs. Before v68 both of those went
-wrong, and the first one could silently resolve to an unrelated address that happened to be the
-only visible match.
+The scanner reads through the loader's own hooks and other plugins' patches, so a resolve answers
+the same question your disassembler did.
 
 #### Locators for other game builds
 
@@ -635,9 +610,6 @@ The log says which rule picked each address:
 [Map] MyPlugin: UCrCraftingComponent::FinishCrafting: no row for CL-129100; built pattern, CL-128786 row agree
 ```
 
-A v71 loader refuses a v72 plugin and shows it as needing a newer mod loader, so you never have to
-check whether candidates are supported.
-
 #### Map keys (PLUGIN_SCAN_FLAG_MAP_KEY)
 
 New to the map? [From fingerprinting to mapping](FingerprintToMapping.md) is the short step-by-step.
@@ -666,14 +638,13 @@ kind, its pattern as the loader parses it, `resultOffset` and `followRel32At` (-
 they were verified with: a site key needs its own pattern, and changing the pattern or an offset
 reads none of the old rows until the map has rows for the new request.
 
-**Order.** The map's row for the running build, the latest build's row verified on this one, then
-your candidates and pattern, then (for a declared feature) off, else an error: see
-[Features](#features----declarefeature). Your candidates are read as in
-[Locators for other game builds](#locators-for-other-game-builds). When one of your candidates has
-an `rva` and is for this very exe, the map's pick must land on that `rva`, or the resolve fails as
-AMBIGUOUS. Rows the map holds under the key for another kind, or for another fingerprint of a site,
-are not used. A key with no rows your request can use runs on your pattern and candidates alone,
-and fails with neither.
+**Order.** The map's row for the running build decides on its own. With no such row, the latest
+earlier build's row is rescanned on this build, and that result, your pattern and your candidates
+must all resolve to the same address (two different addresses fail the key). If none resolves, the
+declared feature goes off, else it is an error: see [Features](#features----declarefeature). When one
+of your candidates has an `rva` and is for this very exe, the map's pick must land on that `rva`, or
+the resolve fails as AMBIGUOUS. Rows for another kind, or for another fingerprint of a site, are not
+used.
 
 **Refused**, as a failure with nothing else tried:
 - a key the map marks absent on the running build for your request (a global key for the plugins
@@ -851,13 +822,13 @@ SDK::UWorld* world = PluginSdkRuntime::GetWorld();     // instead of SDK::UWorld
 | `SR_FIELD(T, Class, Member, flags)` | A `PluginField<T>`: `In(object)` gives the member or null. `flags` takes `PLUGIN_FIELD_NATIVE` and `PLUGIN_FIELD_CHECK`. |
 | `SR_BITFIELD(Class, Member)` | A `PluginBitField`: `Get(object)` and `Set(object, value)`. |
 | `SR_FIELD_ANY_SIZE(Class, Member, flags)` | A `PluginFieldSpec` requested with `PLUGIN_FIELD_ANY_SIZE` (size 0), for a reflected member whose size differs between builds. After the request, `resolvedSize` holds the size the loader reports on the running build and `offset` where it is. |
-| `SR_NATIVE_ANY_SIZE(T, Class, Member, offset)` | A `PluginField<T>` requested with `PLUGIN_FIELD_NATIVE \| PLUGIN_FIELD_ANY_SIZE` (size 0): a member reflection does not describe, at its compiled `offset`, whose size differs between builds. `resolvedSize` holds the size the loader reports on the running build. Needs a loader carrying feat/native-any-size. |
+| `SR_NATIVE_ANY_SIZE(T, Class, Member, offset)` | A `PluginField<T>` requested with `PLUGIN_FIELD_NATIVE \| PLUGIN_FIELD_ANY_SIZE` (size 0): a member reflection does not describe, at its compiled `offset`, whose size differs between builds. `resolvedSize` holds the size the loader reports on the running build. Needs the first loader release after v1.23.1. |
 | `SR_SIZE_CHECK(Class)` | A checked class size: the request fails on a build where the class's size changed. |
 | `SR_SIZE(Class)` | An unchecked class size: `resolvedSize` holds the size the game reflects on the running build. Step through an array with it using `PluginMap::ElementAt` (see [Struct sizes: live or checked](#struct-sizes-live-or-checked)). 0 = not resolved. |
 | `PluginMap::ElementAt(array, index, size)` | The address of element `index` of a game `TArray` (or, with `ElementAt(data, count, index, size)`, of a buffer), stepped by the `SR_SIZE` row's `resolvedSize`, not a `sizeof`. Null when the array is empty, `index` is out of range or the size did not resolve. |
 | `PluginMap::StructBuffer(size)` | A zeroed, 16-aligned block of an `SR_SIZE` row's `resolvedSize`; empty when the size did not resolve. See [When a struct's size can change](#when-a-structs-size-can-change-live-size-check-buffer-map-walk). |
 | `PluginMap::ParamsBlock(parmsSize, params)`, `PluginMap::Call(object, function, block)` | A `ProcessEvent` parameter block sized from the function's live `ParmsSize`, with each parameter at its reflected offset; invalid when a parameter does not fit. |
-| `SR_PARAMS_SIZE(Class, Function)`, `SR_PARAM(Class, Function, Param)`, `PluginMap::ParamsBlockOf(size, { &param, ... })` | A function's `ParmsSize` and one parameter's offset and size as the running game reflects them (`Params::<Class>_<Function>`), and the `ParamsBlock` built from them. Also for a Blueprint class that is not loaded yet: pending until `PluginMap::ResolveLateFields` resolves it from the game thread. Needs a loader carrying feat/param-offsets. |
+| `SR_PARAMS_SIZE(Class, Function)`, `SR_PARAM(Class, Function, Param)`, `PluginMap::ParamsBlockOf(size, { &param, ... })` | A function's `ParmsSize` and one parameter's offset and size as the running game reflects them (`Params::<Class>_<Function>`), and the `ParamsBlock` built from them. Also for a Blueprint class that is not loaded yet: pending until `PluginMap::ResolveLateFields` resolves it from the game thread. Needs the first loader release after v1.23.1. |
 | `PluginMap::ScriptMapView(map, MapLayout(...))`, `ScriptSetView(set, SetLayout(...))` | Walks a game `TMap` / `TSet` at the stride computed from the live key and value sizes: `ForEach`, and `Find` by key. Invalid, with a `Reason()`, when the layout is not the container's. |
 | `PluginMap::EnumValue(enumName, entry, value)` | A game enum entry's number, read by name from the running game's `UEnum`: `Found` (written to `value`), `EntryMissing` or `EnumMissing`. Game thread only; look it up once and keep it. |
 | `PluginMap::ResolveFields(scan, self, fields...)` | `ResolveField` for each, every one asked even after a failure, so the log lists them all. Sends `PLUGIN_GAME_BUILT_CL` as `builtCL`. True when all resolved. |
@@ -1008,27 +979,20 @@ if (const uint8_t* result = g_waveDuration.In(call.Param("ReturnValue")))
     UseDuration(*result);
 ```
 
-The loader gives you those offsets and the `ParmsSize` itself. Ask for the function's Dumper-7
-parameter struct, `Params::<Class>_<Function>`, as a class: `SR_PARAMS_SIZE(Class, Function)` is its
-size (the function's `ParmsSize`, in `resolvedSize`) and `SR_PARAM(Class, Function, Param)` is one
-parameter (its reflected offset in `offset`, its size in `resolvedSize`; `Param` is `ReturnValue` for
-the return). `Class` is the game's class name without its prefix letter, as Dumper-7 spells it in the
-struct. `PluginMap::ParamsBlockOf` turns the resolved rows into a block. A function name that more
-than one class has, or none, is refused, so the feature is off. Needs a loader carrying
-`feat/param-offsets`.
+The loader gives you those offsets and the `ParmsSize`. `SR_PARAMS_SIZE(Class, Function)` is the
+function's size (`resolvedSize`), and `SR_PARAM(Class, Function, Param)` is one parameter (`offset`,
+and its size in `resolvedSize`; `Param` is `ReturnValue` for the return). `Class` is the game's class
+name without its prefix letter. `PluginMap::ParamsBlockOf` turns the resolved rows into a block. A
+function name that more than one class has, or none, is refused. Needs the first loader release
+after v1.23.1.
 
-`Class` may be a Blueprint generated class (`WBP_InventorySlot_C`). The game loads it with the
-screen that uses it and frees it again, so it is normally not loaded in `OnPluginLoadHooks`: the
-rows then stay unresolved, the key is pending (not refused, no failure popup) and the feature that
-lists it is off. Keep the `IPluginHookScanner*` and call `PluginMap::ResolveLateFields` from the
-game thread, for example once per tick, until it returns true, then set the feature's enabled flag.
-It asks only the rows still unresolved; the loader looks at the game at most every two seconds per
-key and never once resolved. The numbers then hold for the process, even when the class is freed
-and reloaded. Only parameters count, not the locals of the Blueprint function. This needs a loader
-with `PLUGIN_FIELD_LATE` (interface v75, the loader after 1.23.1 that carries it); an older loader
-ignores the flag and refuses a Blueprint class, so the feature stays off there. While pending,
-`ParamsBlockOf` is invalid. To check that one parameter is the only one, compare the block size
-with that parameter's end: `block.Size() == inSize.offset + inSize.resolvedSize`.
+`Class` may be a Blueprint class (`WBP_InventorySlot_C`). It is normally not loaded in
+`OnPluginLoadHooks`, so its rows are pending, not refused: list the key in a declared feature, keep
+the `IPluginHookScanner*`, and call `PluginMap::ResolveLateFields` from the game thread until it
+returns true. `ParamsBlockOf` is invalid until then. This needs the first loader release after
+v1.23.1 (`PLUGIN_FIELD_LATE`); an older loader refuses a Blueprint class. See
+[From fingerprinting to mapping](FingerprintToMapping.md). To check that one parameter is the only
+one, compare `block.Size()` with `inSize.offset + inSize.resolvedSize`.
 
 ```cpp
 static auto g_stageSize   = SR_PARAMS_SIZE(CrEnviroWaveSubsystem, GetCurrentStageSettings);
@@ -1072,36 +1036,18 @@ Use it where the code would call `TMap::operator[]` or `Find` on the compiled ty
 closed: when the layout cannot be this container's the view is invalid, says why in `Reason()` /
 `ReasonText()`, and yields nothing. Use the pointers inside the tick that fetched the map.
 
-The layout is Unreal Engine 5's script layout, the arithmetic of `FScriptMap::GetScriptLayout`,
-`FScriptSet::GetScriptLayout` and `FScriptSparseArray::GetScriptLayout`: the pair is the key and
-then the value at its alignment, the set element adds the two `int32` hash links, and the sparse
-array pads the element to hold a two-`int32` free-list link. The loader's reflection does not
-expose an `FMapProperty`'s stored layout, so the layout is computed from the sizes and alignments
-you pass. Sizes come from `SR_SIZE` rows. An alignment is the live `UStruct::MinAlignment` of the
-struct (a game struct keeps it across a resize unless its members change); an engine type such as
-`FName` or `FGameplayTag` has a fixed one. Each view checks the container before it yields
-anything: the counts, the used-slot bits, the free list and every element's hash fields must agree
-with the layout, which a wrong stride or alignment does not do.
+The layout is Unreal Engine 5's script layout. Sizes come from `SR_SIZE` rows. An alignment is the
+live `UStruct::MinAlignment` of the struct, or the fixed one of an engine type such as `FName`. Each
+view checks the container before it yields anything, so a wrong stride or alignment gives an
+invalid view.
 
 #### GetWorld: the viewport's world
 
-`PluginSdkRuntime::GetWorld()` returns `UEngine::GameViewport->World`, the world the player sees.
-`SDK::UWorld::GetWorld()` returns the engine's `GWorld` global, and that is not always the same
-world. A plugin that creates a world of its own (MiniMap's sprite capture world is one: a preview
-world the engine is not told about) can leave `GWorld` pointing at it. Every plugin reading `GWorld`
-then sees a world with no game state and no player, and waits for the game world for the rest of the
-session. The viewport's world cannot be such a world, because only the engine's own world context
-puts a world in the viewport. That same context keeps `GWorld`, so on travel and loading both go
-null together, and code that waits for a null world to pass behaves as before.
-
-On the SDK's own game build the two members are read at their compiled offsets. On any other build
-they are looked up by name in the running game's reflection and their size is checked, the way the
-loader's map reads a reflected member (`PluginLazyField`, through `hooks->ObjectProperties`).
-`GetWorld()` falls back to `GWorld` only when there is no engine or no viewport yet (before the
-engine is up, and on a dedicated server, which has no viewport), or when a member is not found.
-
-The loader does the same for its own reads (`SdkGlobals::GetWorld`), and its world-start events pass
-the world that began play, not a global getter's result.
+`PluginSdkRuntime::GetWorld()` returns the world the player sees (`UEngine::GameViewport->World`).
+`SDK::UWorld::GetWorld()` returns `GWorld`, which a plugin that creates a world of its own can leave
+pointing at that world. On other game builds the members are found by name through reflection.
+`GetWorld()` falls back to `GWorld` only when there is no engine or viewport yet (a dedicated server
+has none) or a member is not found.
 
 With `PLUGIN_GAME_BUILT_CL` 0 the loader does not know your build, so through `PluginMap::ResolveFields`
 a `PLUGIN_FIELD_NATIVE` member resolves only from a row for the running build, and a checked bitfield
@@ -1154,19 +1100,9 @@ subsystem at a fixed offset. `ResolveMassSignalWorld`, `MassSignalWorldField()` 
 do the same for `UMassSignalSubsystem::CachedWorld`; they are templates so only a plugin that includes
 `MassSignals_classes.hpp` needs the class.
 
-**Resolution order, then what a miss costs.** For a function key (fields: see
-[Game-class fields](#game-class-fields-resolvefield)):
-
-1. The loader's map row for the running changelist (CL).
-2. Otherwise the row of the latest CL the map has one for, rescanned on this build; it counts only
-   if its pattern resolves here, uniquely and as your request's kind.
-3. Otherwise your own pattern and candidates, where every locator that resolves must agree.
-4. Otherwise the key is unresolved: a declared feature turns off, and a key outside any feature
-   refuses the plugin (an error in the failure window).
-
-The loader's [Selection](https://github.com/AlienXAXS/StarRupture-ModLoader/blob/main/VersionMap.md#selection)
-has the full rules (absent rows, AMBIGUOUS, shared names).
-
+**Resolution order.** See [From fingerprinting to mapping](FingerprintToMapping.md) and the
+loader's [Selection](https://github.com/AlienXAXS/StarRupture-ModLoader/blob/main/VersionMap.md#selection). A key that does not resolve turns off its declared feature, and
+refuses the plugin if it is in no feature.
 **What players see.** The plugin loads. The failure window lists each
 feature that is off by its `title`, with the key and the reason; `ModLoader.log` gets one line,
 `[Map] MyPlugin: feature "Mining laser tuning" is off: ADroneLaser::Beam (...)`. The config entries
@@ -1203,29 +1139,12 @@ static PluginInfo s_pluginInfo = {
 };
 ```
 
-**Migration checklist.** Set `PLUGIN_MAP_MIGRATED` only when all of these hold:
-
-1. `PLUGIN_GAME_BUILT_CL` is not 0: your `Shared.props` imports `PluginGameBuild.props` and pins
-   `PluginGameBuiltCL`, or your build passes it, or your Game-SDK has `build_cl.txt`
-   ([Your game build](#your-game-build-plugin_game_built_cl)).
-2. Every game function you reach through an address comes from `PluginMap::Function`, `FunctionAs`,
-   `Global` or `Site`, or a `Resolve` request with `PLUGIN_SCAN_FLAG_MAP_KEY`.
-3. Every member of a game class you read or write through the compiled SDK is an `SR_FIELD`, an
-   `SR_BITFIELD` or a `PluginLazyField`, or sits in a struct whose size an `SR_SIZE_CHECK` covers
-   (a struct you copy by value, a `TArray` element you step through). The engine's and Dumper-7's
-   own members (`UObject::Class`, `FName`, `TArray`'s data and count) stay compiled in.
-4. `PluginInit` calls `PluginSdkRuntime::Init(self->hooks)` as its first statement, before any
-   early return, and the plugin calls `PluginSdkRuntime::GetWorld()`, never
-   `SDK::UWorld::GetWorld()`.
-5. `PluginMap::ResolveFields` (or `PluginVersionMap::ResolveFields`) asks for every field and size
-   row in `OnPluginLoadHooks`.
-
-**What the loader does with the flag.** It judges a plugin against the game build the plugin was
-compiled for (`PLUGIN_GAME_BUILT_CL`), not the loader's. On any other build it lists, the plugin runs
-only if it is interface v72 or later, sets `PLUGIN_MAP_MIGRATED` and calls `GetSdkGlobals` in
-`PluginInit`; otherwise it is listed as **Incompatible**. The rule, with the cases for a plugin before
-v72 and for a tail that names no build, is in [Admission](https://github.com/AlienXAXS/StarRupture-ModLoader/blob/main/VersionMap.md#admission).
-
+**Migration checklist.** Set `PLUGIN_MAP_MIGRATED` only when the checklist in
+[From fingerprinting to mapping](FingerprintToMapping.md#7-checklist) holds: the build is set, every
+function, member and size comes from the map, `PluginSdkRuntime::Init` is first in `PluginInit`, and
+`ResolveFields` asks for every field and size in `OnPluginLoadHooks`. On any build but its own, the
+loader runs a plugin only if it sets the flag; otherwise it is **Incompatible**
+([Admission](https://github.com/AlienXAXS/StarRupture-ModLoader/blob/main/VersionMap.md#admission)).
 #### The function table
 
 | Function | Notes |
@@ -1293,35 +1212,14 @@ is a substring of the flagged text. A reviewer approves each new entry.
 
 #### Getting a value added to the shared map
 
-You do not have to wait for the loader's map to hold a value your plugin needs. Your plugin can
-carry its own row for it: `plugin_version_map.h` builds your rows from `version_map.generated.h`
-into the plugin, and the loader uses its shared row first and your plugin's row second (see
-[Selection](https://github.com/AlienXAXS/StarRupture-ModLoader/blob/main/VersionMap.md#selection)).
-That works from interface v73 on with features (a value that does not resolve turns one feature
-off, see [Features](#features----declarefeature)), and older plugins are still accepted as the
-[interface changelog](#interface-version-changelog) says.
-
-Your own rows are only as current as your last release. To have the pipeline keep a value current
-on every game build, send a PR that adds it to the shared map and to the CI key list:
-
-- **A function or global:** add its rows for the build you tested to the loader's
-  `hooks/game/version_map.generated.h`, and list your plugin among the ones the CI scans (the
-  `plugins` input of starrupture-ci's `sr-client-check.yml`), so the pipeline writes the row for
-  each new build.
-- **A member:** add its row to the same header's `kFieldRows`, and a line to starrupture-ci's
-  `ci/native-keys.txt`, so `ci/field-rows.mjs` reads it from the PDB on every build. Mark the line
-  `optional` if your plugin runs without it; a key is optional only when every plugin's line says so.
-
-A `native-keys.txt` line is `<plugin> <Class::Member>`, then optionally an offset, size and mask in
-hex, then `optional`:
-
-    MiniMap UTexture::SRGB optional
-
-The row formats and the PR steps are in the loader's
-[VersionMap.md](https://github.com/AlienXAXS/StarRupture-ModLoader/blob/main/VersionMap.md).
-Before you send it, check that the plugin sets its build with `PluginGameBuild.props`
-(`PLUGIN_GAME_BUILT_CL`), sets `PLUGIN_MAP_MIGRATED` only once the migration checklist holds, and
-passes the [rule 3 check](#rule-3-check----no-direct-reads-of-game-members).
+Your plugin can carry its own row for a value (`plugin_version_map.h` builds your rows from
+`version_map.generated.h`), and the loader uses its shared row first and your row second. To have
+the pipeline keep a value current on every game build, send a PR that adds it to the shared map and
+to the CI key list. The steps, the `native-keys.txt` line format and an example are in
+[From fingerprinting to mapping](FingerprintToMapping.md#3-get-the-ci-row-for-each-key); the row
+formats are in the loader's [VersionMap.md](https://github.com/AlienXAXS/StarRupture-ModLoader/blob/main/VersionMap.md). Before you send it, check that the plugin sets its
+build (`PLUGIN_GAME_BUILT_CL`), sets `PLUGIN_MAP_MIGRATED` only once the checklist holds, and passes
+the [rule 3 check](#rule-3-check----no-direct-reads-of-game-members).
 
 ---
 
