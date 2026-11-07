@@ -11,6 +11,21 @@ matches, or an offset that now points at something else, breaks the plugin or co
 The loader's version map holds a row per game build for each key, so your plugin asks for a
 value by name and gets the one for the build that is running. Your pattern stays as a fallback.
 
+## Check these first
+
+`include/plugin_map.h` already has helpers for what most plugins do next. Look there before
+writing your own:
+
+- `PluginMap::StructBuffer` (a zeroed block of a struct's live size), `ElementAt` (step an array by
+  the live size), `ParamsBlockOf` and `Call` (a game function with a live parameter block).
+- `PluginMap::ScriptSetView`, `ScriptMapView`, `SetLayout`, `MapLayout` (a TSet or TMap of a
+  struct whose size can change).
+- `PluginMap::EnumValue` (a game enum entry by name), `PluginLazyField` (a member found by name on
+  first use), `ValueOr` (a member, or a fallback), `KeysOf` (the key list of a feature).
+- `PluginMap::MassEntityManagerField`, `ResolveMassEntityManager`, `MassEntityManagerOf` and
+  `MassSignalWorldOf` (the Mass entity manager and signal world, already keyed).
+- `PluginSdkRuntime::Init`, `GetWorld`, `OnSdkBuild`.
+
 ## 2. Turn each hard-coded value into a key
 
 | You have | Key | Written as |
@@ -50,11 +65,35 @@ row for every game build. If its size also changes between builds, use `SR_NATIV
 (type, class, member, compiled offset) and read `resolvedSize`. For a reflected member whose
 size changes, use `SR_FIELD_ANY_SIZE`, and treat a size you do not handle as "not there".
 
+A native bool bitfield has no macro (`SR_BITFIELD` is for reflected ones). Write the spec with
+`PLUGIN_FIELD_NATIVE | PLUGIN_FIELD_BITFIELD`, and give the byte and mask you measured as a row for
+the build your SDK was made for:
+
+```cpp
+static auto g_srgb = PluginBitField{ { "UTexture::SRGB", "UTexture", "SRGB",
+    PLUGIN_FIELD_NATIVE | PLUGIN_FIELD_BITFIELD, sizeof(uint8_t), -1 } };
+static const PluginFieldCandidate kSrgbRows[] = { { 127004, 0x106, 1, 0x01, nullptr } };
+PluginMap::ResolveField(scanner, self, g_srgb, kSrgbRows, 1);
+// read:  g_srgb.Get(texture)     write:  g_srgb.Set(texture, true)
+```
+
 **Struct size.** Pick by what the code does with the struct:
 - It only steps through an array of it: `SR_SIZE(Struct)`, then `PluginMap::ElementAt`. The live
   size is used, so a resize costs nothing.
 - It copies the struct, takes it from a return value, or hands a buffer of it to the game:
   `SR_SIZE_CHECK(Struct)`. The plugin (or its feature) goes off if the size changed.
+- A plain C++ struct with no SDK type (`FMassEntityQuery`) has no `SR_SIZE` macro, because the
+  macros take `sizeof(SDK::Class)`. Write the spec with the struct's name as the key and give the
+  size you measured as a row. The loader answers from the row for the running build and refuses
+  without one:
+
+  ```cpp
+  static auto g_query = PluginFieldSpec{ "FMassEntityQuery", "FMassEntityQuery", nullptr,
+      PLUGIN_FIELD_FLAG_NONE, 0x350, -1 };    // PLUGIN_FIELD_CHECK to also demand 0x350
+  static const PluginFieldCandidate kQueryRows[] = { { 127004, 0, 0x350, 0, nullptr } };
+  PluginMap::ResolveField(scanner, self, g_query, kQueryRows, 1);
+  PluginMap::StructBuffer query(g_query);     // a block of the live size
+  ```
 - A struct that keeps changing when you only need a few members: copy those members into a
   struct your plugin owns, and read each from the game with `SR_FIELD`.
 
@@ -81,6 +120,14 @@ The loader does not switch the feature on when it resolves: set your own enabled
 parameter is the last one; also check `param.resolvedSize == sizeof(<engine type>)` (for example
 `FVector2D`) before writing into it.
 
+**Key or allow-list.** If a game update can change the number, it is a key. If it cannot, it
+stays in your code and `tools/rule3-allow.json` gets an exception with a reason:
+- Fixed by the engine version: the `TArray` header (0x10), shared-pointer counts, `UObject` flag bits.
+- A byte distance inside your own matched pattern (where a call or an operand sits). To reach a
+  call, use `PLUGIN_SCAN_FLAG_FOLLOW_REL32` and skip the decoding. The map has no follow-rip
+  setting for plugins and no vtable-slot key: a game function you call through a slot is better
+  asked for by name (`PluginMap::Function`).
+
 ## 3. Get the CI row for each key
 
 The pipeline writes a row per game build only for keys it knows about. For an outside plugin
@@ -101,6 +148,12 @@ A line is `<plugin> <Class::Member>`, or `<plugin> <ClassName>` for a struct siz
 may give `<offset> <size> <mask>` in hex (only when the PDB's size is not the one your plugin was
 built with), then `optional` if the plugin runs without that key. The header of the file has the
 full format.
+
+`optional` only tells CI the plugin has a fallback, so a member gone from a build does not hold
+back the map. The loader does not read it: whether a miss turns off one feature or refuses the
+plugin depends on the key being listed in a declared feature (section 5). A struct the game
+reflects on one build and not on another needs a row only on the builds where it is not
+reflected; a native member needs a row on every build.
 
 Reflected members, structs the game reflects, and parameters (`SR_PARAM`, `SR_PARAMS_SIZE`) are
 read live from the game and need no line and no row.
@@ -124,6 +177,11 @@ For builds from before your key existed, CI has no row. A function key can still
 Interface v72 to v75 all ship in loader v1.23.0. An older loader refuses a plugin that needs a
 newer interface. It ignores `PLUGIN_FIELD_LATE`, so a Blueprint class stays refused there.
 
+No version number marks a loader that has the newer requests, so do not gate on one. Loaders up to
+v1.23.1 refuse each of them: a struct the game does not reflect, `SR_NATIVE_ANY_SIZE`,
+`SR_PARAM` / `SR_PARAMS_SIZE` and a Blueprint class. The key then counts as not resolved, so list
+it in a declared feature (section 5): that feature stays off there and the plugin loads.
+
 Resolve everything once, in `OnPluginLoadHooks`:
 
 ```cpp
@@ -136,6 +194,8 @@ The loader tries, in order:
 - **Function:** the row for the running build decides on its own. With no such row, the loader
   rescans the pattern of the latest earlier build's row on this build. That result, your pattern
   and your own rows must all resolve to the same address; two different addresses fail the key.
+  The key also fails when no pattern matches exactly once, or when the map marks it absent on a
+  build newer than that row.
 - **Reflected member:** the row, then the game's own reflection.
 - **Native member:** the row for the running build only. No row means refusal.
 
