@@ -18,8 +18,6 @@
     { "plugin": "Compass", "file": "src/compass/compass_textures.h", "kind": "offset", "reason": "UObject flags and index, FUObjectItem and UStreamableRenderAsset/UTexture flags: core engine layout, kept compiled on purpose" },
     { "plugin": "ProductionViewer", "file": "ProductionViewer/Production Viewer/production_basecore.cpp", "kind": "offset", "reason": "TSharedPtr reference controller strong and weak counts: engine layout, kept compiled on purpose" },
     { "plugin": "RuptureTimer", "file": "src/debug/object_dumper.cpp", "kind": "offset", "what": "kOff_FProperty_Offset", "reason": "FProperty layout inside the object dumper: core engine layout, kept compiled on purpose" },
-    { "plugin": "WaveOptimiser", "file": "src/wave_optimiser_signatures.h", "kind": "offset", "what": "GetSubsystemMassEntity_CallOffset", "reason": "byte distance to a call inside a matched code pattern (a code-shape check), not a game member offset" },
-    { "plugin": "CameraControls", "file": "src/cameracontrols_fields.h", "kind": "offset", "what": "kOriginOffset", "reason": "ULocalPlayer::Origin, an Engine class member that is not a UPROPERTY, kept compiled on purpose" },
-    { "plugin": "CameraControls", "file": "src/cameracontrols_fields.h", "kind": "offset", "what": "kSizeOffset", "reason": "ULocalPlayer::Size, an Engine class member that is not a UPROPERTY, kept compiled on purpose" }
+    { "plugin": "WaveOptimiser", "file": "src/wave_optimiser_signatures.h", "kind": "offset", "what": "GetSubsystemMassEntity_CallOffset", "reason": "byte distance to a call inside a matched code pattern (a code-shape check), not a game member offset" }
   ]
 }
