@@ -30,6 +30,9 @@ static void Check(bool ok, const char* what)
 // A struct whose compiled size (0x10) differs from the size a build reflects.
 namespace SDK { struct FWidget { uint8_t bytes[0x10]; }; }
 
+// A Dumper-7 parameter struct as compiled: an in-parameter, then the return.
+namespace SDK::Params { struct Widget_Resize { uint32_t InSize; uint8_t Pad[4]; uint64_t ReturnValue; }; }
+
 // A scanner that answers ResolveField with a fixed reflected size, and keeps
 // the last request.
 static uint32_t           g_reflectedSize = 0;
@@ -276,6 +279,68 @@ static void TestParamsBlock()
 	Check(!PluginMap::Call(static_cast<FakeObject*>(nullptr), &function, block), "a null object makes no call");
 	PluginMap::ParamsBlock empty(0x10, {});
 	Check(static_cast<bool>(empty), "a function with no reflected parameters to touch still gets a block");
+}
+
+// Each request answers with the offset and size its class and member name
+// carry, as the loader's reflected lookup of a parameter would.
+static bool ParamResolve(const IPluginSelf*, const PluginFieldRequest* request, PluginFieldResult* result)
+{
+	g_lastRequest = *request;
+	if (request->member == nullptr)
+	{
+		result->offset = 0;
+		result->size = 0x20; // ParmsSize on this build
+	}
+	else if (std::strcmp(request->member, "InSize") == 0)
+	{
+		result->offset = 0;
+		result->size = 4;
+	}
+	else
+	{
+		result->offset = 0x18; // not the compiled 0x08: a parameter was inserted
+		result->size = 8;
+	}
+	result->boolMask = 0;
+	return true;
+}
+
+static void TestParamMacros()
+{
+	printf("SR_PARAM, SR_PARAMS_SIZE and ParamsBlockOf\n");
+	PluginFieldSpec size   = SR_PARAMS_SIZE(Widget, Resize);
+	PluginFieldSpec inSize = SR_PARAM(Widget, Resize, InSize);
+	PluginFieldSpec ret    = SR_PARAM(Widget, Resize, ReturnValue);
+
+	Check(std::strcmp(size.key, "Widget_Resize") == 0 && std::strcmp(size.className, "Widget_Resize") == 0 && size.member == nullptr,
+		"the size row is the parameter struct's name");
+	Check((size.flags & (PLUGIN_FIELD_CHECK | PLUGIN_FIELD_NATIVE | PLUGIN_FIELD_BITFIELD | PLUGIN_FIELD_ANY_SIZE)) == 0, "and carries no flag");
+	Check(size.size == sizeof(SDK::Params::Widget_Resize), "the compiled size is recorded");
+	Check(std::strcmp(ret.key, "Widget_Resize::ReturnValue") == 0 && std::strcmp(ret.className, "Widget_Resize") == 0
+		&& std::strcmp(ret.member, "ReturnValue") == 0, "a parameter is keyed by struct and member");
+	Check((ret.flags & PLUGIN_FIELD_ANY_SIZE) != 0 && ret.size == 0, "and takes the size the game reflects");
+	Check(ret.builtOffset == static_cast<int32_t>(offsetof(SDK::Params::Widget_Resize, ReturnValue)), "the compiled offset is recorded");
+
+	IPluginHookScanner scanner{};
+	scanner.ResolveField = &ParamResolve;
+	Check(!PluginMap::ParamsBlockOf(size, { &inSize, &ret }), "unresolved rows make an invalid block");
+
+	Check(PluginMap::ResolveFields(&scanner, nullptr, size, inSize, ret), "the rows resolve");
+	Check(size.resolvedSize == 0x20 && ret.offset == 0x18 && ret.resolvedSize == 8, "with the live offsets and sizes");
+
+	PluginMap::ParamsBlock block = PluginMap::ParamsBlockOf(size, { &inSize, &ret });
+	Check(static_cast<bool>(block) && block.Size() == 0x20, "the block is the live ParmsSize");
+	Check(block.Param("InSize") == block.Data(), "InSize is at its live offset");
+	Check(block.Param("ReturnValue") == static_cast<uint8_t*>(block.Data()) + 0x18, "the return is at the live offset, not the compiled one");
+
+	PluginFieldSpec tooLate = ret;
+	tooLate.offset = 0x1C; // 0x1C + 8 > 0x20
+	Check(!PluginMap::ParamsBlockOf(size, { &tooLate }), "a parameter past the live ParmsSize is invalid");
+	PluginFieldSpec unresolvedParam = SR_PARAM(Widget, Resize, ReturnValue);
+	Check(!PluginMap::ParamsBlockOf(size, { &unresolvedParam }), "an unresolved parameter is invalid");
+	Check(!PluginMap::ParamsBlockOf(size, { nullptr }), "a null row is invalid");
+	PluginFieldSpec unresolvedSize = SR_PARAMS_SIZE(Widget, Resize);
+	Check(!PluginMap::ParamsBlockOf(unresolvedSize, { &ret }), "an unresolved block size is invalid");
 }
 
 static void TestLayouts()
@@ -648,6 +713,7 @@ int main()
 
 	TestBuffer();
 	TestParamsBlock();
+	TestParamMacros();
 	TestLayouts();
 	TestMapWalk();
 	TestWalkFailsClosed();

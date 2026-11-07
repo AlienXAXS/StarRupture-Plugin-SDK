@@ -31,6 +31,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <initializer_list>
 #include <new>
 #include <string>
 #include <type_traits>
@@ -191,6 +192,23 @@ struct PluginBitField : PluginFieldSpec
 // compiled layout: use SR_SIZE_CHECK there.
 #define SR_SIZE(Class) \
     PluginFieldSpec{ #Class, #Class, nullptr, PLUGIN_FIELD_FLAG_NONE, sizeof(SDK::Class), -1 }
+// A parameter (or the return value) of a game UFunction, at the offset and size
+// the running game reflects it, not the ones the compiled Dumper-7 parameter
+// struct Params::<Class>_<Function> has. Class is the game's class name without
+// its prefix letter, as Dumper-7 spells it in that struct (CrEnviroWaveSubsystem,
+// not UCrEnviroWaveSubsystem). Param is a member of the struct, "ReturnValue" for
+// the return. The loader reports the offset in `offset` and the size in
+// `resolvedSize`; a function name more than one class has, or none, is refused.
+// Hand it to PluginMap::ParamsBlockOf with SR_PARAMS_SIZE. Needs a loader
+// carrying feat/param-offsets.
+#define SR_PARAM(Class, Function, Param) \
+    PluginFieldSpec{ #Class "_" #Function "::" #Param, #Class "_" #Function, #Param, PLUGIN_FIELD_ANY_SIZE, 0, \
+                     static_cast<int32_t>(offsetof(SDK::Params::Class##_##Function, Param)) }
+// The size of a UFunction's parameter block (its ParmsSize) on the running game,
+// in `resolvedSize`. The compiled size is recorded but not compared.
+#define SR_PARAMS_SIZE(Class, Function) \
+    PluginFieldSpec{ #Class "_" #Function, #Class "_" #Function, nullptr, PLUGIN_FIELD_FLAG_NONE, \
+                     sizeof(SDK::Params::Class##_##Function), -1 }
 
 namespace PluginMap
 {
@@ -451,6 +469,27 @@ namespace PluginMap
             return false;
         object->ProcessEvent(function, block.Data());
         return true;
+    }
+
+    // A ParamsBlock from the SR_PARAMS_SIZE row and the SR_PARAM rows of the
+    // parameters the call touches, once the loader has resolved them
+    // (ResolveFields). Invalid, so the feature stays off, when any row did not
+    // resolve or a parameter does not fit the block.
+    //
+    //   PluginMap::ParamsBlock block = PluginMap::ParamsBlockOf(g_stageSize, { &g_stageReturn });
+    //   if (!block) return;
+    //   PluginMap::Call(wave, function, block);
+    //   const uint8_t* settings = block.Param("ReturnValue");
+    inline ParamsBlock ParamsBlockOf(const PluginFieldSpec& blockSize, std::initializer_list<const PluginFieldSpec*> params)
+    {
+        std::vector<FunctionParam> list;
+        for (const PluginFieldSpec* param : params)
+        {
+            if (!param || !param->member || param->offset < 0 || param->resolvedSize == 0)
+                return ParamsBlock(0, {});
+            list.push_back(FunctionParam{ param->member, static_cast<uint32_t>(param->offset), param->resolvedSize });
+        }
+        return ParamsBlock(blockSize.resolvedSize, std::move(list));
     }
 }
 

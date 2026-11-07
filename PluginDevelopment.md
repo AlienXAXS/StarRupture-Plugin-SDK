@@ -855,6 +855,7 @@ SDK::UWorld* world = PluginSdkRuntime::GetWorld();     // instead of SDK::UWorld
 | `PluginMap::ElementAt(array, index, size)` | The address of element `index` of a game `TArray` (or, with `ElementAt(data, count, index, size)`, of a buffer), stepped by the `SR_SIZE` row's `resolvedSize`, not a `sizeof`. Null when the array is empty, `index` is out of range or the size did not resolve. |
 | `PluginMap::StructBuffer(size)` | A zeroed, 16-aligned block of an `SR_SIZE` row's `resolvedSize`; empty when the size did not resolve. See [When a struct's size can change](#when-a-structs-size-can-change-live-size-check-buffer-map-walk). |
 | `PluginMap::ParamsBlock(parmsSize, params)`, `PluginMap::Call(object, function, block)` | A `ProcessEvent` parameter block sized from the function's live `ParmsSize`, with each parameter at its reflected offset; invalid when a parameter does not fit. |
+| `SR_PARAMS_SIZE(Class, Function)`, `SR_PARAM(Class, Function, Param)`, `PluginMap::ParamsBlockOf(size, { &param, ... })` | A function's `ParmsSize` and one parameter's offset and size as the running game reflects them (`Params::<Class>_<Function>`), and the `ParamsBlock` built from them. Needs a loader carrying feat/param-offsets. |
 | `PluginMap::ScriptMapView(map, MapLayout(...))`, `ScriptSetView(set, SetLayout(...))` | Walks a game `TMap` / `TSet` at the stride computed from the live key and value sizes: `ForEach`, and `Find` by key. Invalid, with a `Reason()`, when the layout is not the container's. |
 | `PluginMap::EnumValue(enumName, entry, value)` | A game enum entry's number, read by name from the running game's `UEnum`: `Found` (written to `value`), `EntryMissing` or `EnumMissing`. Game thread only; look it up once and keep it. |
 | `PluginMap::ResolveFields(scan, self, fields...)` | `ResolveField` for each, every one asked even after a failure, so the log lists them all. Sends `PLUGIN_GAME_BUILT_CL` as `builtCL`. True when all resolved. |
@@ -1003,6 +1004,26 @@ if (!PluginMap::Call(wave, function, call))    // wave->ProcessEvent(function, c
     return;
 if (const uint8_t* result = g_waveDuration.In(call.Param("ReturnValue")))
     UseDuration(*result);
+```
+
+The loader gives you those offsets and the `ParmsSize` itself. Ask for the function's Dumper-7
+parameter struct, `Params::<Class>_<Function>`, as a class: `SR_PARAMS_SIZE(Class, Function)` is its
+size (the function's `ParmsSize`, in `resolvedSize`) and `SR_PARAM(Class, Function, Param)` is one
+parameter (its reflected offset in `offset`, its size in `resolvedSize`; `Param` is `ReturnValue` for
+the return). `Class` is the game's class name without its prefix letter, as Dumper-7 spells it in the
+struct. `PluginMap::ParamsBlockOf` turns the resolved rows into a block. A function name that more
+than one class has, or none, is refused, so the feature is off. Needs a loader carrying
+`feat/param-offsets`.
+
+```cpp
+static auto g_stageSize   = SR_PARAMS_SIZE(CrEnviroWaveSubsystem, GetCurrentStageSettings);
+static auto g_stageReturn = SR_PARAM(CrEnviroWaveSubsystem, GetCurrentStageSettings, ReturnValue);
+// ... PluginMap::ResolveFields(scanner, self, g_stageSize, g_stageReturn, ...) in OnPluginLoadHooks
+
+PluginMap::ParamsBlock call = PluginMap::ParamsBlockOf(g_stageSize, { &g_stageReturn });
+if (!call || !PluginMap::Call(wave, function, call))
+    return;
+const uint8_t* settings = call.Param("ReturnValue");
 ```
 
 `StructBuffer` and `ParamsBlock` are for the game thread, like any `ProcessEvent`.
