@@ -640,6 +640,8 @@ check whether candidates are supported.
 
 #### Map keys (PLUGIN_SCAN_FLAG_MAP_KEY)
 
+New to the map? [From fingerprinting to mapping](FingerprintToMapping.md) is the short step-by-step.
+
 From v72 the loader carries its own version map: rows for each game build it supports, kept up to
 date by its CI. What the map holds, how the loader picks a row and how the map reaches players is in
 [VersionMap.md](https://github.com/AlienXAXS/StarRupture-ModLoader/blob/main/VersionMap.md). With `PLUGIN_SCAN_FLAG_MAP_KEY`, `hookName` is a key in that map, and `pattern` and

@@ -40,6 +40,8 @@ Client builds have access to Input, UI panel, and HUD hooks. These interfaces ar
 
 Network channel (`hooks->Network`) is available on both client and server builds; it is `nullptr` on generic builds. Use `plugin_network_helpers.h` for typed packet send/receive rather than calling `IPluginNetworkChannel` directly.
 
+Moving a plugin from patterns and fixed offsets to the loader's version map: [From fingerprinting to mapping](FingerprintToMapping.md).
+
 ## Runtime DLL
 
 `dwmapi.dll` is the modloader itself. It is **not** built from this repo. Pre-built binaries are attached to each [release](../../releases/latest).
