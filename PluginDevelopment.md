@@ -992,7 +992,10 @@ the `IPluginHookScanner*`, and call `PluginMap::ResolveLateFields` from the game
 returns true. `ParamsBlockOf` is invalid until then. This needs the first loader release after
 v1.23.1 (`PLUGIN_FIELD_LATE`); an older loader refuses a Blueprint class. See
 [From fingerprinting to mapping](FingerprintToMapping.md). To check that one parameter is the only
-one, compare `block.Size()` with `inSize.offset + inSize.resolvedSize`.
+one, compare `block.Size()` with `inSize.offset + inSize.resolvedSize`. That only proves the
+parameter is the last one: also check `resolvedSize == sizeof(<engine type>)` (for example
+`FVector2D`) before writing into it. The loader does not switch the feature on when the rows
+resolve: set your own enabled flag after `ResolveLateFields` succeeds.
 
 ```cpp
 static auto g_stageSize   = SR_PARAMS_SIZE(CrEnviroWaveSubsystem, GetCurrentStageSettings);

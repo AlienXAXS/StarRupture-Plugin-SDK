@@ -76,6 +76,10 @@ parameters count, not locals). A Blueprint class is not loaded when plugins star
 stay pending and the feature stays off until you call `PluginMap::ResolveLateFields` from the
 game thread (for example once per tick, until it returns true). List the key in a declared
 feature (section 5): a pending key that no feature lists refuses the plugin.
+The loader does not switch the feature on when it resolves: set your own enabled flag after
+`ResolveLateFields` succeeds. `block.Size() == param.offset + param.resolvedSize` only proves the
+parameter is the last one; also check `param.resolvedSize == sizeof(<engine type>)` (for example
+`FVector2D`) before writing into it.
 
 ## 3. Get the CI row for each key
 
