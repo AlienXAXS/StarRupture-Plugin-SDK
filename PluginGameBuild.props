@@ -15,6 +15,9 @@
             folder (GameSDKRoot, else the StarRupture SDK folder);
          3. nothing: no define, and the plugin declares build 0.
 
+       PLUGIN_GAME_BUILD_PROPS says this file was imported, so that
+       plugin_map.h can stop a build that lost it.
+
        Import it from the plugin's Shared.props, after GameSDKRoot
        and PluginSDKInclude are set:
          <Import Project="$(PluginSDKInclude)\..\PluginGameBuild.props"
@@ -36,6 +39,11 @@
   <PropertyGroup Condition="'$(StarRuptureGameBuiltCL)' == '' And '$(StarRuptureBuildCLFile)' != '' And Exists('$(StarRuptureBuildCLFile)')">
     <StarRuptureGameBuiltCL>$([System.IO.File]::ReadAllText('$(StarRuptureBuildCLFile)').Trim())</StarRuptureGameBuiltCL>
   </PropertyGroup>
+  <ItemDefinitionGroup>
+    <ClCompile>
+      <PreprocessorDefinitions>PLUGIN_GAME_BUILD_PROPS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+  </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(StarRuptureGameBuiltCL)' != ''">
     <ClCompile>
       <PreprocessorDefinitions>PLUGIN_GAME_BUILT_CL=$(StarRuptureGameBuiltCL)u;%(PreprocessorDefinitions)</PreprocessorDefinitions>

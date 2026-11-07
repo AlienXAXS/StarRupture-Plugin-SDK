@@ -798,8 +798,9 @@ of a copy of the block:
         Condition="Exists('$(PluginSDKInclude)\..\PluginGameBuild.props')" />
 ```
 
-The `PropertyGroup` is the pin, and is optional. The SDK's own `Shared.props` imports the file the
-same way.
+The `PropertyGroup` is the pin, and is optional. The SDK's own `Shared.props` imports the file too.
+If the import did not happen, say with only a copy of the `include` folder, `plugin_map.h` stops the
+build with an error that names the file.
 
 ```cpp
 #include "plugin_map.h"
