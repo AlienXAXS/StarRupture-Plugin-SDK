@@ -171,6 +171,15 @@ struct PluginBitField : PluginFieldSpec
 // next), and treat a size the plugin does not handle as the member not there.
 // A reflected member only: `flags` must not carry NATIVE, CHECK or BITFIELD.
 #define SR_FIELD_ANY_SIZE(Class, Member, flags)     PluginFieldSpec{ #Class "::" #Member, #Class, #Member, (flags) | PLUGIN_FIELD_ANY_SIZE, 0,                      static_cast<int32_t>(offsetof(SDK::Class, Member)) }
+// A member reflection does not describe (a plain C++ type such as
+// FMassEntityManager) whose size is not the same on every build: `offset` is its
+// byte offset on the build the plugin was compiled for, and the loader reports
+// the size the running build has in `resolvedSize`, as SR_FIELD_ANY_SIZE does.
+// T is the type to read it as, e.g. uint8_t for a block read by `resolvedSize`.
+// Needs a loader carrying feat/native-any-size: an older loader refuses the
+// NATIVE | ANY_SIZE combination and the request fails.
+#define SR_NATIVE_ANY_SIZE(T, Class, Member, offset) \
+    PluginField<T>{ { #Class "::" #Member, #Class, #Member, PLUGIN_FIELD_NATIVE | PLUGIN_FIELD_ANY_SIZE, 0, (offset) } }
 // The size of an SDK class, checked on the running build (PLUGIN_FIELD_CHECK).
 #define SR_SIZE_CHECK(Class) \
     PluginFieldSpec{ #Class, #Class, nullptr, PLUGIN_FIELD_CHECK, sizeof(SDK::Class), -1 }

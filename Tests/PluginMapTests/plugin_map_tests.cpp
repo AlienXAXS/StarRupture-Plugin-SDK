@@ -628,6 +628,24 @@ int main()
 		Check(PluginMap::EnumValue(nullptr, "Normal", value) == PluginMap::EnumLookup::EnumMissing, "a null enum name is missing");
 	}
 
+	printf("SR_NATIVE_ANY_SIZE\n");
+	{
+		const auto field = SR_NATIVE_ANY_SIZE(uint8_t, FWidget, Block, 0x120);
+		Check(std::strcmp(field.key, "FWidget::Block") == 0, "the key is Class::Member");
+		Check(field.flags == (PLUGIN_FIELD_NATIVE | PLUGIN_FIELD_ANY_SIZE), "native and any-size, nothing else");
+		Check(field.size == 0, "the compiled size is 0");
+		Check(field.builtOffset == 0x120, "the built offset is the one given");
+
+		IPluginHookScanner scanner{};
+		scanner.ResolveField = &FakeResolveField;
+		auto live = SR_NATIVE_ANY_SIZE(uint8_t, FWidget, Block, 0x120);
+		g_reflectedSize = 0x30;
+		g_resolves = true;
+		Check(PluginMap::ResolveField(&scanner, nullptr, live), "the member resolves");
+		Check(live.resolvedSize == 0x30, "the loader's size lands in resolvedSize");
+		Check((g_lastRequest.flags & (PLUGIN_FIELD_NATIVE | PLUGIN_FIELD_ANY_SIZE)) == (PLUGIN_FIELD_NATIVE | PLUGIN_FIELD_ANY_SIZE), "the request carries both flags");
+	}
+
 	TestBuffer();
 	TestParamsBlock();
 	TestLayouts();
