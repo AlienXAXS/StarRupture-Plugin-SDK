@@ -38,6 +38,7 @@ This guide covers building the mod loader from source, creating new plugins, the
      - [hooks->Text (IPluginTextUtils)](#hooks-text)
      - [hooks->NetMode (IPluginNetModeInfo) -- Server + Client](#hooks-netmode)
      - [hooks->ImGuiTextures (IPluginImGuiTextures) -- Client only](#hooks-imguitextures)
+       - [Item icons (item_icons.h)](#item-icons-item_iconsh)
      - [hooks->Splash (IPluginSplash) -- Client only](#hooks-splash)
      - [hooks->HttpServer (IPluginHttpServer) -- Server only](#hooks-httpserver)
      - [hooks->Crafting (IPluginCraftingEvents)](#hooks-crafting)
@@ -2071,6 +2072,41 @@ if (hooks->ImGuiTextures && g_tex) {
 Textures loaded with the same `name` (case-insensitive) share one GPU resource and are refcounted -- every successful `Load*` call must be paired with exactly one `FreeTexture` call. Capacity is currently 4096 slots (v45); query with `GetFreeSlotCount()` / `GetCapacity()`.
 
 **`FreeTexture` is safe at any time (v70).** It retires the texture rather than destroying it: the handle stops drawing immediately, and the GPU resource and its slot are released once every frame that could have used them has finished. You can free from the game thread, from a render callback, or during a world transition, with no frame-counting or delays. Before v70 a game-thread `FreeTexture` could release a resource the render thread's in-flight command list still used, and the GPU faulted. The slot becomes reusable a frame or two later, so `GetFreeSlotCount` does not count it until then. This is a loader-side change, so it applies to plugins built against older headers too.
+
+##### Item icons (item_icons.h)
+
+`include/item_icons.h` loads the game's item icons for you. An icon is copied into the loader the first time a window draws it, a few per tick, so nothing waits for all of them at start-up. Include it after `plugin_interface.h` and the Game-SDK headers. It is for client builds: on a server or generic build `Init` returns `false` and the rest does nothing.
+
+The plugin tells it how to read an item, through its own fields:
+
+```cpp
+#include "item_icons.h"
+
+static ItemIcons::Loader g_icons;
+
+static std::string UniqueNameOf(SDK::UAuItemDataBase* item) { /* the item's UniqueItemName, or "" */ }
+static const SDK::FSlateBrush* IconOf(SDK::UAuItemDataBase* item) { /* the item's ItemIcon, or nullptr */ }
+
+// PluginInit
+g_icons.Init(self, "MyPlugin", { &UniqueNameOf, &IconOf });
+
+// Engine tick (game thread): loads the icons asked for since the last tick
+g_icons.Tick();
+
+// Render callback: icon, then a 6 px gap
+g_icons.Draw(imgui, hooks->ImGuiTextures, uniqueItemName, 20.0f);
+
+// PluginShutdown
+g_icons.Shutdown();
+```
+
+- `Init(self, tag, accessors, budgetMs)` -- `tag` starts the log lines. `budgetMs` is how long one `Tick` may spend loading icons (default `IconRequests::kDefaultBudgetMs`, 8 ms). A tick always loads at least one. Init holds the splash screen until the item scan is done.
+- `Draw(imgui, textures, name, size, gap)` -- draws the icon at the cursor and moves on by `gap` (default 6). While the icon loads it leaves an empty square of the same size, so text after it does not move. An item with no icon takes no room.
+- `Get(name)` -- the `PluginTextureHandle`, or `nullptr` if the item has no icon or it has not loaded yet. Asking for an item that has an icon queues it.
+- `Has(name)` -- `true` if the item has an icon, loaded or not.
+- `IconIs(name, textureId)` -- `true` if the item's icon is the texture whose `GetFullName()` is `textureId`. Game thread.
+
+`Tick` and `IconIs` run on the game thread. `Init` can run in `PluginInit`: it only posts the scan to the game thread. `Get`, `Has` and `Draw` can run on any thread, so call them from the render callback. `Shutdown` frees the handles and touches no game object. Nothing keeps a game object between ticks.
 
 ---
 
