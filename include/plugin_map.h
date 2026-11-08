@@ -85,6 +85,19 @@ namespace PluginMap
         return reinterpret_cast<Fn>(Function(scanner, self, key, pattern, kind, flags, resultOffset, followRel32At));
     }
 
+    // A map key's pattern for CI key-source builds only. CI defines
+    // SR_KEY_SOURCE_BUILD when it builds a plugin to read its keys; shipped
+    // builds pass no pattern, so a key the loader's map does not hold fails
+    // instead of scanning. Use it for global function and data keys only: a
+    // site key needs its pattern at run time, as the loader refuses a site
+    // key with no fingerprint. The shipped form still names `p`, unevaluated,
+    // so a pattern constant used only here raises no unused warning.
+#ifdef SR_KEY_SOURCE_BUILD
+#define PLUGIN_MAP_PATTERN(p) (p)
+#else
+#define PLUGIN_MAP_PATTERN(p) (static_cast<void>(sizeof(p)), static_cast<const char*>(nullptr))
+#endif
+
     // A game global (kind DATA) by its name, e.g. Global<SDK::UWorld*>(scanner,
     // self, "GWorld"). `pattern`, if given, matches the global's own bytes.
     // Null = a recorded failure.

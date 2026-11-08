@@ -843,6 +843,7 @@ SDK::UWorld* world = PluginSdkRuntime::GetWorld();     // instead of SDK::UWorld
 |--------|--------------|
 | `PluginMap::Function(scan, self, key, pattern, kind, flags, resultOffset, followRel32At)` | `Resolve` with `PLUGIN_SCAN_FLAG_MAP_KEY` (see [Map keys](#map-keys-plugin_scan_flag_map_key)). `kind` defaults to `FUNCTION_START`; `flags` takes `OPTIONAL` and `FOLLOW_REL32` as before. 0 = a recorded failure. |
 | `PluginMap::FunctionAs<Fn>(...)` | The same, as a function pointer: `FunctionAs<void (*)(SDK::UWorld*)>(...)`. |
+| `PLUGIN_MAP_PATTERN(pattern)` | The pattern when CI builds your plugin to read its keys (it defines `SR_KEY_SOURCE_BUILD`), otherwise null. Wrap the pattern of a global function or data key in it, and a shipped build relies on the loader's map for that key and fails if the map lacks it. Not for `Site`, which needs its pattern at run time: `PluginMap::FunctionAs<void (*)(SDK::UWorld*)>(scan, self, "UWorld::BeginPlay", PLUGIN_MAP_PATTERN(kBeginPlayPattern))`. |
 | `PluginMap::Global<T>(scan, self, key, pattern = nullptr)` | A global by name, kind `DATA`, as a `T*`. |
 | `PluginMap::Site(scan, self, hookName, pattern, kind, ...)` | Your own site, `<PluginInfo name>/<hookName>`, kept under the request's fingerprint: it needs its own pattern. |
 | `PluginMap::Feature`, `PluginMap::DeclareFeatures(scan, self, features...)` | A part of the plugin that can be off while the rest runs (see [Features](#features----declarefeature)). `feature.On()` is false once a key of it did not resolve. |
