@@ -95,6 +95,37 @@ if (SDK::UAudioComponent* c = m_audio.Get())   // nullptr once it is gone or its
 
 `Reset()` clears it, and references are small, trivially copyable, and compare with `==`. Call `Get()` on the game thread (the `Tick` callback, not a render callback), since that is the thread that frees objects. It includes `Basic.hpp` and `CoreUObject_classes.hpp` from the game SDK. The tests in `Tests/ObjectRefTests/` build without the game, against stand-ins for those headers.
 
+## Saved presets
+
+`include/plugin_presets.h` gives a plugin a "Saved Presets" row: a dropdown of the player's saved presets with Save, Rename and Delete. It is header-only and uses only `IModLoaderImGui`. Presets are kept in `<plugin dir>\config\<Plugin>-Presets.ini`, in groups, so one file can serve several panels.
+
+1. Keep one `PluginPresets::Store` for the plugin and load it once, with the path of the file. Pass a logger if you want the store's messages in your log.
+2. For each group, keep a `PluginPresets::RowState` and call `RenderSavedRow` from your panel.
+3. Give it four small callables: read the live values, apply a loaded preset, say whether a name is one of your own built-in presets, and suggest a name for a new copy.
+
+```cpp
+#include <plugin_presets.h>
+
+static PluginPresets::Store s_presets([](const char* line) { MyLog(line); });
+static PluginPresets::RowState s_speedRow;
+
+// once, at startup
+s_presets.LoadFile(presetsPath);
+
+// in the panel
+PluginPresets::Field fields[2];
+PluginPresets::RenderSavedRow(ui, s_presets, "speed", "Speed", fields, 2,
+    [](PluginPresets::Field* out) { out[0] = { "speed", ReadSpeed() }; out[1] = { "boost", ReadBoost() }; },
+    [](const PluginPresets::Field* f, int n) { ApplySpeed(f[0].value, f[1].value); },
+    [](const char* name) { return IsBuiltInSpeedName(name); },
+    [](char* out, int cap) { snprintf(out, cap, "Custom"); },
+    s_speedRow);
+```
+
+Save over a selected saved preset asks "You're saving over ... Continue?" first. Save with nothing selected adds a new entry ("Custom", "Custom 2", ...). Built-in presets are never written to the file. The store is thread-safe, so a hotkey can read a preset with `Store::Get` while the panel is open.
+
+Players' files are protected: loading never writes, the first rewrite keeps a `.bak` copy beside the file, and a file with a line the store cannot read is left alone (the row says so instead of saving). The tests are in `Tests/PluginPresetsTests/` and build without the game. To also check a real presets file, pass its path as the first argument; the file is only read.
+
 ## Interface versioning
 
 This SDK tracks the current `PLUGIN_INTERFACE_VERSION_MAX` from the modloader. The `PluginInfo` struct your plugin returns must set `interfaceVersion` to `PLUGIN_INTERFACE_VERSION` (defined in `plugin_interface.h`) or the modloader will refuse to load it.
