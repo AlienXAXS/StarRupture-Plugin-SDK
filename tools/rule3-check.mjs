@@ -44,7 +44,7 @@
 // 3 findings under enforce, 2 usage or unreadable input.
 
 import { readFileSync, readdirSync, statSync, writeFileSync, existsSync } from 'node:fs';
-import { join, relative, sep, dirname, basename } from 'node:path';
+import { join, relative, resolve, sep, dirname, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 export const EXIT_OK = 0;
@@ -744,14 +744,25 @@ export function applyAllow(findings, allow, plugin) {
   return { kept, allowed, stale };
 }
 
+// The directory file paths are reported (and matched against the allow-list)
+// relative to: the git checkout holding the scanned source (a plain checkout or
+// a worktree, both have a `.git` entry), so a finding reads the same wherever
+// the checkout lives. Falls back to the scanned directory itself.
+function pathRoot(file, sources) {
+  const src = sources.find((s) => !relative(s, file).startsWith('..')) ?? dirname(file);
+  for (let d = resolve(src); ; d = dirname(d)) {
+    if (existsSync(join(d, '.git'))) return d;
+    if (dirname(d) === d) return resolve(src);
+  }
+}
+
 export function check({ plugin, sdkDir, sources, allowFile, mode = 'auto', index = null }) {
   const allow = loadAllow(allowFile);
   const idx = index ?? loadSdkIndex(sdkDir);
   const ctx = new Context({ index: idx, allow, plugin });
   const files = listSources(sources);
   const codes = files.map((f) => ({ file: f, code: stripNonCode(readFileSync(f, 'utf8')) }));
-  const root = sources.length === 1 ? sources[0] : null;
-  const rel = (f) => (root ? relative(root, f) : f).split(sep).join('/');
+  const rel = (f) => relative(pathRoot(f, sources), f).split(sep).join('/');
   const migrated = codes.some((c) => declaresMigrated(c.code));
   for (const c of codes) scanFile(ctx, rel(c.file), c.code, true);
   // SR_SIZE_CHECK lists are plugin-wide; they are complete after the first pass.

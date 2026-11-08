@@ -850,9 +850,14 @@ SDK::UWorld* world = PluginSdkRuntime::GetWorld();     // instead of SDK::UWorld
 | `SR_FIELD(T, Class, Member, flags)` | A `PluginField<T>`: `In(object)` gives the member or null. `flags` takes `PLUGIN_FIELD_NATIVE` and `PLUGIN_FIELD_CHECK`. |
 | `SR_BITFIELD(Class, Member)` | A `PluginBitField`: `Get(object)` and `Set(object, value)`. |
 | `SR_FIELD_ANY_SIZE(Class, Member, flags)` | A `PluginFieldSpec` requested with `PLUGIN_FIELD_ANY_SIZE` (size 0), for a reflected member whose size differs between builds. After the request, `resolvedSize` holds the size the loader reports on the running build and `offset` where it is. |
+| `SR_NATIVE_ANY_SIZE(T, Class, Member, offset)` | A `PluginField<T>` requested with `PLUGIN_FIELD_NATIVE \| PLUGIN_FIELD_ANY_SIZE` (size 0): a member reflection does not describe, at its compiled `offset`, whose size differs between builds. `resolvedSize` holds the size the loader reports on the running build. Needs a loader carrying feat/native-any-size. |
 | `SR_SIZE_CHECK(Class)` | A checked class size: the request fails on a build where the class's size changed. |
 | `SR_SIZE(Class)` | An unchecked class size: `resolvedSize` holds the size the game reflects on the running build. Step through an array with it using `PluginMap::ElementAt` (see [Struct sizes: live or checked](#struct-sizes-live-or-checked)). 0 = not resolved. |
 | `PluginMap::ElementAt(array, index, size)` | The address of element `index` of a game `TArray` (or, with `ElementAt(data, count, index, size)`, of a buffer), stepped by the `SR_SIZE` row's `resolvedSize`, not a `sizeof`. Null when the array is empty, `index` is out of range or the size did not resolve. |
+| `PluginMap::StructBuffer(size)` | A zeroed, 16-aligned block of an `SR_SIZE` row's `resolvedSize`; empty when the size did not resolve. See [When a struct's size can change](#when-a-structs-size-can-change-live-size-check-buffer-map-walk). |
+| `PluginMap::ParamsBlock(parmsSize, params)`, `PluginMap::Call(object, function, block)` | A `ProcessEvent` parameter block sized from the function's live `ParmsSize`, with each parameter at its reflected offset; invalid when a parameter does not fit. |
+| `SR_PARAMS_SIZE(Class, Function)`, `SR_PARAM(Class, Function, Param)`, `PluginMap::ParamsBlockOf(size, { &param, ... })` | A function's `ParmsSize` and one parameter's offset and size as the running game reflects them (`Params::<Class>_<Function>`), and the `ParamsBlock` built from them. Also for a Blueprint class that is not loaded yet: pending until `PluginMap::ResolveLateFields` resolves it from the game thread. Needs a loader carrying feat/param-offsets. |
+| `PluginMap::ScriptMapView(map, MapLayout(...))`, `ScriptSetView(set, SetLayout(...))` | Walks a game `TMap` / `TSet` at the stride computed from the live key and value sizes: `ForEach`, and `Find` by key. Invalid, with a `Reason()`, when the layout is not the container's. |
 | `PluginMap::EnumValue(enumName, entry, value)` | A game enum entry's number, read by name from the running game's `UEnum`: `Found` (written to `value`), `EntryMissing` or `EnumMissing`. Game thread only; look it up once and keep it. |
 | `PluginMap::ResolveFields(scan, self, fields...)` | `ResolveField` for each, every one asked even after a failure, so the log lists them all. Sends `PLUGIN_GAME_BUILT_CL` as `builtCL`. True when all resolved. |
 | `PluginVersionMap::Attach(request)`, `PluginVersionMap::ResolveFields(...)` | `plugin_version_map.h`: the same with your generated rows for the key and its `kBuiltCL`. |
@@ -873,6 +878,8 @@ it for any build. What a plugin does with the size decides which row to ask for.
   to a native function to fill, and a `TMap` or `TArray` of the struct that the compiled code
   indexes. The loader cannot change compiled code, so the request fails on a build where the size
   moved, and the feature turns off instead of reading the wrong bytes.
+  Before reaching for it, see [When a struct's size can change](#when-a-structs-size-can-change-live-size-check-buffer-map-walk):
+  most of these uses can read in place, copy the members they need, or use a buffer or a map walk of the live size.
 
 ```cpp
 static auto g_skillSize = SR_SIZE(FCrSkillData);        // stepped through: the live size
@@ -908,6 +915,172 @@ case PluginMap::EnumLookup::EnumMissing:  /* the enum is not loaded (yet): try a
 
 It reads UObjects, so it runs on the game thread only, and it walks every loaded object, so call
 it once when the feature first runs and keep the value. `value` is written only on `Found`.
+
+#### When a struct's size can change: live size, check, buffer, map walk
+
+A plugin never depends on the compiled size or layout of a game struct, because an update can
+change either. The loader gives the running build's value for each: a struct's size
+(`resolvedSize` of an `SR_SIZE` row) and a member's offset (the field accessor's `.In(object)`).
+Some code cannot use them as they are, because it holds, copies or walks the struct with a
+compiled C++ type (`SDK::FStruct value = *ptr`, `FStruct helper{}`, `uint8_t buf[0x30]`,
+`TMap<FKey, FStruct>`). Take the first of these that fits:
+
+1. **Don't copy the struct.** Read the members you need in place, through `.In(ptr)`, inside the
+   tick that fetched the pointer. The struct's size does not matter, only the members' offsets.
+2. **Copy only the members you need** into a small struct the plugin owns, filled through `.In()`.
+   Its layout is yours and never changes.
+3. **Use a run-time sized buffer** (`PluginMap::StructBuffer`, `PluginMap::ParamsBlock`) only when
+   the game has to fill or receive the whole struct: a native constructor, a `ProcessEvent` return
+   or parameter, or a saved copy that gets written back whole.
+4. **Use the map walk** (`PluginMap::ScriptMapView`, `ScriptSetView`) for a `TMap` or `TSet` whose
+   key or value is such a struct.
+
+All four take their sizes from `SR_SIZE` rows, so a build that resizes the struct does not turn the
+plugin off. A feature whose size row did not resolve (`resolvedSize` is 0) is off: the helpers
+below come back empty instead of guessing.
+
+##### 1. Read in place
+
+```cpp
+static auto g_waveSize = SR_SIZE(FCrEnviroWaveSettings);
+static PluginField<float> g_waveDuration = SR_FIELD(float, FCrEnviroWaveSettings, Duration, 0);
+...
+// `settings` points at the game's struct, fetched this tick. No copy, no sizeof.
+if (const float* duration = g_waveDuration.In(settings))
+    UseDuration(*duration);
+```
+
+##### 2. Copy the members you need
+
+```cpp
+struct WaveSnapshot { float duration = 0.0f; int32_t stage = 0; };   // ours: this layout never moves
+
+bool Snapshot(const void* settings, WaveSnapshot& out)
+{
+    const float* duration = g_waveDuration.In(settings);
+    const int32_t* stage = g_waveStage.In(settings);
+    if (!duration || !stage)
+        return false;                       // a member did not resolve: the feature is off
+    out.duration = *duration;
+    out.stage = *stage;
+    return true;
+}
+```
+
+The snapshot is plain data, so it is safe to keep past the tick; the game's pointer is not.
+
+##### 3. A buffer of the live size
+
+`PluginMap::StructBuffer` is a zeroed block of a resolved struct's `resolvedSize`, aligned to 16
+bytes. It is empty when the size did not resolve, and the caller turns its feature off. Members are
+read and written through the same accessors as the game's own struct: `field.In(buffer.Data())`.
+
+```cpp
+static auto g_helperSize = SR_SIZE(FCrMassEntityReplicationHelper);
+...
+PluginMap::StructBuffer helper(g_helperSize);
+if (!helper)
+    return;                                 // size unresolved: skip
+g_helperConstruct(helper.Data(), entityManager);    // the game's native constructor fills it
+if (const uint8_t* handle = g_helperHandle.In(helper.Data()))
+    Use(handle);
+```
+
+`CopyFrom(src)` and `CopyTo(dst)` move a whole game struct of that size in and out, for a saved
+copy that is written back later.
+
+For a `ProcessEvent` call whose return value or parameters include such a struct, build the
+parameter block from the function's live `ParmsSize` and the reflected offset and size of each
+parameter you touch, with `PluginMap::ParamsBlock`. A parameter that does not fit inside the live
+`ParmsSize` makes the block invalid, so a changed function turns the feature off instead of
+writing out of bounds. `PluginMap::Call` does nothing with an invalid block.
+
+```cpp
+// parmsSize: the function's live UFunction::ParmsSize, as BetterCheats reads it.
+// retOffset, retSize: the ReturnValue property's reflected offset and size.
+PluginMap::ParamsBlock call(parmsSize, { { "ReturnValue", retOffset, retSize } });
+if (!call)
+    return;
+if (!PluginMap::Call(wave, function, call))    // wave->ProcessEvent(function, call.Data())
+    return;
+if (const uint8_t* result = g_waveDuration.In(call.Param("ReturnValue")))
+    UseDuration(*result);
+```
+
+The loader gives you those offsets and the `ParmsSize` itself. Ask for the function's Dumper-7
+parameter struct, `Params::<Class>_<Function>`, as a class: `SR_PARAMS_SIZE(Class, Function)` is its
+size (the function's `ParmsSize`, in `resolvedSize`) and `SR_PARAM(Class, Function, Param)` is one
+parameter (its reflected offset in `offset`, its size in `resolvedSize`; `Param` is `ReturnValue` for
+the return). `Class` is the game's class name without its prefix letter, as Dumper-7 spells it in the
+struct. `PluginMap::ParamsBlockOf` turns the resolved rows into a block. A function name that more
+than one class has, or none, is refused, so the feature is off. Needs a loader carrying
+`feat/param-offsets`.
+
+`Class` may be a Blueprint generated class (`WBP_InventorySlot_C`). The game loads it with the
+screen that uses it and frees it again, so it is normally not loaded in `OnPluginLoadHooks`: the
+rows then stay unresolved, the key is pending (not refused, no failure popup) and the feature that
+lists it is off. Keep the `IPluginHookScanner*` and call `PluginMap::ResolveLateFields` from the
+game thread, for example once per tick, until it returns true, then set the feature's enabled flag.
+It asks only the rows still unresolved; the loader looks at the game at most every two seconds per
+key and never once resolved. The numbers then hold for the process, even when the class is freed
+and reloaded. Only parameters count, not the locals of the Blueprint function. This needs a loader
+with `PLUGIN_FIELD_LATE` (interface v75, the loader after 1.23.1 that carries it); an older loader
+ignores the flag and refuses a Blueprint class, so the feature stays off there. While pending,
+`ParamsBlockOf` is invalid. To check that one parameter is the only one, compare the block size
+with that parameter's end: `block.Size() == inSize.offset + inSize.resolvedSize`.
+
+```cpp
+static auto g_stageSize   = SR_PARAMS_SIZE(CrEnviroWaveSubsystem, GetCurrentStageSettings);
+static auto g_stageReturn = SR_PARAM(CrEnviroWaveSubsystem, GetCurrentStageSettings, ReturnValue);
+// ... PluginMap::ResolveFields(scanner, self, g_stageSize, g_stageReturn, ...) in OnPluginLoadHooks
+
+PluginMap::ParamsBlock call = PluginMap::ParamsBlockOf(g_stageSize, { &g_stageReturn });
+if (!call || !PluginMap::Call(wave, function, call))
+    return;
+const uint8_t* settings = call.Param("ReturnValue");
+```
+
+`StructBuffer` and `ParamsBlock` are for the game thread, like any `ProcessEvent`.
+
+##### 4. Walking a TMap or TSet
+
+The compiled `SDK::TMap<FKey, FValue>` steps its storage by `sizeof(FValue)`, which is wrong the
+moment the game resizes the value. `PluginMap::ScriptMapView` (and `ScriptSetView` for a `TSet`)
+walks the live elements at the stride computed from the live key and value sizes, skips the holes
+of the sparse array through its allocation flags, and yields key and value pointers.
+
+```cpp
+static auto g_bindingSize = SR_SIZE(FCrContextualInputBinding);
+...
+// `bindings` is the TMap member of the object, from its field accessor.
+const PluginMap::ScriptSetLayout layout = PluginMap::MapLayout(
+    sizeof(SDK::FGameplayTag), alignof(SDK::FGameplayTag),     // the key: an engine type
+    g_bindingSize.resolvedSize, bindingAlign);                 // the value: the live size
+PluginMap::ScriptMapView map(g_bindings.In(object), layout);
+if (!map)
+{
+    LogOnce(map.ReasonText());              // the layout is not this container's: feature off
+    return;
+}
+map.ForEach([&](uint8_t* key, uint8_t* value) { /* g_bindingAction.In(value) ... */ });
+uint8_t* sprint = map.Find([&](const uint8_t* key) { return SameTag(key, sprintTag); });
+```
+
+`Find` is a linear walk comparing keys, which is fine for the small maps a game keeps by tag.
+Use it where the code would call `TMap::operator[]` or `Find` on the compiled type. A walk fails
+closed: when the layout cannot be this container's the view is invalid, says why in `Reason()` /
+`ReasonText()`, and yields nothing. Use the pointers inside the tick that fetched the map.
+
+The layout is Unreal Engine 5's script layout, the arithmetic of `FScriptMap::GetScriptLayout`,
+`FScriptSet::GetScriptLayout` and `FScriptSparseArray::GetScriptLayout`: the pair is the key and
+then the value at its alignment, the set element adds the two `int32` hash links, and the sparse
+array pads the element to hold a two-`int32` free-list link. The loader's reflection does not
+expose an `FMapProperty`'s stored layout, so the layout is computed from the sizes and alignments
+you pass. Sizes come from `SR_SIZE` rows. An alignment is the live `UStruct::MinAlignment` of the
+struct (a game struct keeps it across a resize unless its members change); an engine type such as
+`FName` or `FGameplayTag` has a fixed one. Each view checks the container before it yields
+anything: the counts, the used-slot bits, the free list and every element's hash fields must agree
+with the layout, which a wrong stride or alignment does not do.
 
 #### GetWorld: the viewport's world
 

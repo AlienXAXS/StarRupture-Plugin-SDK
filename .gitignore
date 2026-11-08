@@ -50,6 +50,8 @@ ipch/
 
 # build
 build/
+obj/
+bin/
 .mcp.json
 StarRupture SDK/Xenos.log
 StarRupture SDK/XenosCurrentProfile.xpr
