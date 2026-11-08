@@ -22,6 +22,9 @@
 #include <thread>
 #include <vector>
 
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+
 namespace fs = std::filesystem;
 using namespace PluginPresets;
 
@@ -469,8 +472,8 @@ int main(int argc, char** argv)
 		Fake::clicks.insert("Continue##overwrite");
 		Frame(store, state);
 		const std::string expected = ReplaceSection(kFixture, "[Speed:Fast Mode]\r\n",
-			"speedPerSec=111.000000\r\nboostMultiplier=2.500000\r\n");
-		Check(ReadBytes(sb.file) == expected, "Continue rewrites only the selected entry");
+			"speedPerSec=111.000000\r\nboostMultiplier=2.500000\r\nacceleration=9000.000000\r\ndeceleration=0.250000\r\n");
+		Check(ReadBytes(sb.file) == expected, "Continue rewrites only the selected entry and keeps the stored keys the live set lacks");
 		Check(strcmp(state.selected, "Fast Mode") == 0, "and keeps it selected");
 
 		// Nothing selected: a new auto-named entry.
@@ -481,10 +484,57 @@ int main(int argc, char** argv)
 		Frame(store, fresh);
 		Check(Fake::openPopups.empty(), "Save with nothing selected asks nothing");
 		Check(strcmp(fresh.selected, "Custom") == 0 && store.Exists("Speed", "Custom"), "and adds Custom");
-		RowState fresh2;
+
+		// The same row state again: Save now asks to overwrite Custom, and
+		// choosing "(none)" first gets a second new entry.
 		Fake::clicks.insert("Save");
-		Frame(store, fresh2);
-		Check(strcmp(fresh2.selected, "Custom 2") == 0, "and the next one is Custom 2");
+		Frame(store, fresh);
+		Check(Fake::openPopups.count("Overwrite preset?##Speed") == 1, "a second Save on the same row asks to overwrite");
+		Fake::Reset();
+		Fake::clicks.insert("Cancel##overwrite");
+		Frame(store, fresh);
+		Frame(store, fresh);
+		Fake::Reset();
+		Fake::comboPick = "(none)##nosel";
+		Frame(store, fresh);
+		Check(fresh.selected[0] == '\0', "picking (none) clears the selection");
+		Fake::clicks.insert("Save");
+		Frame(store, fresh);
+		Check(Fake::openPopups.empty() && strcmp(fresh.selected, "Custom 2") == 0 && store.Exists("Speed", "Custom 2"),
+			"and the next Save on the same row state adds Custom 2");
+
+		// The overwrite question is about the name it was opened for, even if the
+		// selection moves, or the entry vanishes, before Continue.
+		{
+			RowState st;
+			snprintf(st.selected, sizeof(st.selected), "%s", "Custom");
+			Fake::Reset();
+			Fake::clicks.insert("Save");
+			Frame(store, st);
+			Frame(store, st);
+			Check(Fake::Said("You're saving over Custom. Continue?"), "the question names the entry it was opened for");
+			snprintf(st.selected, sizeof(st.selected), "%s", "Custom 2"); // a hotkey moved the selection
+			g_live[0] = 222.0f;
+			Fake::clicks.insert("Continue##overwrite");
+			Frame(store, st);
+			g_live[0] = 111.0f;
+			const std::string after = ReadBytes(sb.file);
+			Check(after.find("[Speed:Custom]\r\nspeedPerSec=222.000000\r\n") != std::string::npos
+				&& after.find("[Speed:Custom 2]\r\nspeedPerSec=111.000000\r\n") != std::string::npos,
+				"Continue saves over the entry the question named, not the moved selection");
+
+			RowState gone;
+			snprintf(gone.selected, sizeof(gone.selected), "%s", "Custom 2");
+			Fake::Reset();
+			Fake::clicks.insert("Save");
+			Frame(store, gone);
+			store.Delete("Speed", "Custom 2");
+			const std::string beforeGone = ReadBytes(sb.file);
+			Fake::clicks.insert("Continue##overwrite");
+			Frame(store, gone);
+			Check(Fake::Said("That preset no longer exists, so nothing was saved.") && ReadBytes(sb.file) == beforeGone
+				&& !store.Exists("Speed", "Custom 2"), "a vanished target writes nothing and says so");
+		}
 
 		// A built-in preset in play: the suggested name carries its label; the built-in is never written.
 		RowState fresh3;
@@ -539,6 +589,37 @@ int main(int argc, char** argv)
 			Check(Fake::openPopups.empty() && !state.renaming, "and opens nothing");
 		}
 		Check(ReadBytes(sb.file) == bad && !fs::exists(sb.bak), "the file is untouched");
+	}
+
+	// A file that exists but cannot be read at load: read-only for the session.
+	{
+		const std::string original = "[Speed:Mine]\r\nspeedPerSec=7.000000\r\n\r\n[Speed:Other]\r\nspeedPerSec=8.000000\r\n\r\n";
+		Sandbox sb(original);
+		WriteBytes(sb.bak, "older backup");
+		Logs logs;
+		Store store(logs.Sink());
+		HANDLE lock = CreateFileW(sb.file.wstring().c_str(), GENERIC_READ, 0, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+		Check(lock != INVALID_HANDLE_VALUE, "the test can lock the file");
+		store.LoadFile(sb.Path().c_str());
+		CloseHandle(lock); // the lock is gone before Save, as with a scan that has finished
+
+		Check(store.IsReadOnly(), "an existing file that could not be read makes the store read-only");
+		Field f[1] = { { "speedPerSec", 1.0f } };
+		Check(!store.Save("Speed", "Custom", f, 1), "Save is refused");
+		Check(!store.Save("Speed", "Mine", f, 1), "Save over is refused");
+		Check(!store.Rename("Speed", "Mine", "Yours"), "Rename is refused");
+		Check(!store.Delete("Speed", "Mine"), "Delete is refused");
+		Check(ReadBytes(sb.file) == original, "the file bytes are unchanged");
+		Check(ReadBytes(sb.bak) == "older backup", "and so is the .bak");
+		Check(!fs::exists(sb.tmp), "and no .tmp was made");
+
+		// The row says so instead of saving.
+		RowState state;
+		Fake::Reset();
+		Fake::clicks.insert("Save");
+		Frame(store, state);
+		Check(Fake::openPopups.empty() && !Fake::texts.empty(), "the row shows a message instead of saving");
+		Check(ReadBytes(sb.file) == original, "and writes nothing");
 	}
 
 	// Concurrent use of one store (the panel and a hotkey).
