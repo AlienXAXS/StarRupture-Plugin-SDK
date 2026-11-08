@@ -17,6 +17,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
+#include <limits>
 #include <set>
 #include <string>
 #include <thread>
@@ -476,7 +477,9 @@ int main(int argc, char** argv)
 		Check(ReadBytes(sb.file) == expected, "Continue rewrites only the selected entry and keeps the stored keys the live set lacks");
 		Check(strcmp(state.selected, "Fast Mode") == 0, "and keeps it selected");
 
-		// Nothing selected: a new auto-named entry.
+		// Nothing selected: a new auto-named entry. (A boost no saved preset has, so the row
+		// does not pick one by itself.)
+		g_live[1] = 9.0f;
 		RowState fresh;
 		g_suggest = "Custom";
 		Fake::Reset();
@@ -581,6 +584,7 @@ int main(int argc, char** argv)
 		Fake::clicks.insert("Delete##confirm");
 		Frame(store, state);
 		Check(!store.Exists("Speed", "Fast Mode") && state.selected[0] == '\0', "and then deletes");
+		g_live[1] = 2.5f;
 	}
 
 	// The row on a read-only store: messages, no popups, no writes.
@@ -662,6 +666,87 @@ int main(int argc, char** argv)
 		}
 		reader.join();
 		Check(ok, "a reader thread and a writer thread share one store");
+	}
+
+	// Select on load: a fresh row selects the first saved preset equal to the live values.
+	{
+		const float savedLive0 = g_live[0], savedLive1 = g_live[1];
+		auto setLive = [](float a, float b) { g_live[0] = a; g_live[1] = b; };
+		const std::string head = "[Speed:A]\r\nspeedPerSec=10.000000\r\nboostMultiplier=1.000000\r\n\r\n";
+		const std::string b = "[Speed:B]\r\nspeedPerSec=20.000000\r\nboostMultiplier=2.000000\r\n\r\n";
+		const std::string c = "[Speed:C]\r\nspeedPerSec=20.000000\r\nboostMultiplier=2.000000\r\n\r\n";
+		auto selectedOnFirstFrame = [&](const std::string& text, float l0, float l1) {
+			Sandbox sb(text);
+			Store store;
+			store.LoadFile(sb.Path().c_str());
+			setLive(l0, l1);
+			RowState fresh;
+			Frame(store, fresh);
+			const bool untouched = ReadBytes(sb.file) == text && !fs::exists(sb.bak) && !fs::exists(sb.tmp);
+			Check(untouched, "select on load writes no file");
+			return std::string(fresh.selected);
+		};
+
+		Check(selectedOnFirstFrame(head + b, 20.0f, 2.0f) == "B", "a fresh row whose live values equal preset B (not first) selects B");
+		Check(selectedOnFirstFrame(head + b + c, 20.0f, 2.0f) == "B", "equal to two presets selects the first in list order");
+		Check(selectedOnFirstFrame(head + b, 99.0f, 99.0f).empty(), "no match stays (none)");
+		Check(selectedOnFirstFrame(head + b, 20.0f, 3.0f).empty(), "one differing key is no match");
+
+		const std::string shared = "[Speed:K]\r\nspeedPerSec=30.000000\r\nextra=5.000000\r\n\r\n";
+		Check(selectedOnFirstFrame(shared, 30.0f, 7.0f) == "K", "matching only on the keys both share");
+		Check(selectedOnFirstFrame("[Speed:M]\r\nspeedPerSec=31.000000\r\nextra=5.000000\r\n\r\n", 30.0f, 7.0f).empty(), "a shared key that differs is no match");
+		Check(selectedOnFirstFrame("[Speed:Z]\r\nextra=5.000000\r\n\r\n", 30.0f, 7.0f).empty(), "no shared key is no match");
+		Check(selectedOnFirstFrame("[Speed:Slow]\r\nspeedPerSec=20.000000\r\nboostMultiplier=2.000000\r\n\r\n", 20.0f, 2.0f).empty(), "a built-in name is never auto-selected");
+		Check(selectedOnFirstFrame("[Speed:T]\r\nspeedPerSec=1.2345674\r\nboostMultiplier=2.000000\r\n\r\n", 1.2345671f, 2.0f) == "T", "values are compared as the text the store writes");
+
+		// NaN and Inf compare as the store writes them.
+		const std::string special = "[Speed:N]\r\nspeedPerSec=nan\r\nboostMultiplier=inf\r\n\r\n";
+		Check(selectedOnFirstFrame(special, std::numeric_limits<float>::quiet_NaN(), std::numeric_limits<float>::infinity()) == "N", "NaN and Inf live values match a preset that stores them");
+		Check(selectedOnFirstFrame(special, std::numeric_limits<float>::quiet_NaN(), -std::numeric_limits<float>::infinity()).empty(), "+Inf and -Inf differ");
+
+		// "(none)" picked on purpose stays until an apply; a tweak after auto-select keeps the selection.
+		{
+			Sandbox sb(head + b + c);
+			Store store;
+			store.LoadFile(sb.Path().c_str());
+			setLive(20.0f, 2.0f);
+			RowState row;
+			Frame(store, row);
+			Check(strcmp(row.selected, "B") == 0, "the row starts on B");
+
+			setLive(25.0f, 2.0f); // tweak: B stays selected
+			Frame(store, row);
+			Check(strcmp(row.selected, "B") == 0, "tweaking a value keeps the auto-selection");
+			Fake::Reset();
+			Fake::clicks.insert("Save");
+			Frame(store, row);
+			Check(Fake::openPopups.count("Overwrite preset?##Speed") == 1, "Save after auto-select goes to the overwrite path");
+			Frame(store, row);
+			Check(Fake::Said("You're saving over B. Continue?"), "and names the auto-selected preset");
+			Fake::Reset();
+
+			Fake::comboPick = "(none)##nosel";
+			Frame(store, row);
+			Check(row.selected[0] == '\0', "picking (none) clears the selection");
+			setLive(20.0f, 2.0f); // live now equals B again
+			Frame(store, row);
+			Frame(store, row);
+			Check(row.selected[0] == '\0', "(none) picked explicitly is not re-selected");
+			row.ClearSelection(); // a built-in applied
+			Frame(store, row);
+			Check(strcmp(row.selected, "B") == 0, "after an apply the row looks again");
+
+			Fake::Reset();
+			Fake::comboPick = "(none)##nosel";
+			Frame(store, row);
+			Fake::Reset();
+			Fake::comboPick = "C";
+			Frame(store, row);
+			Check(strcmp(row.selected, "C") == 0, "picking a saved preset applies it and selects it");
+			Fake::Reset();
+			Check(ReadBytes(sb.file) == head + b + c && !fs::exists(sb.bak), "the store file is unchanged after all of it");
+		}
+		setLive(savedLive0, savedLive1);
 	}
 
 	// Optional: round trip on a real file.

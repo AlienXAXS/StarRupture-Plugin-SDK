@@ -62,6 +62,14 @@ namespace PluginPresets
 	// e.g. [](const char* line) { MyLog(line); }. May be empty.
 	using LogSink = std::function<void(const char*)>;
 
+	// A value as the store writes it to the file.
+	inline std::string FormatValue(float value)
+	{
+		char valStr[64];
+		snprintf(valStr, sizeof(valStr), "%.6f", value);
+		return valStr;
+	}
+
 	class Store
 	{
 	public:
@@ -220,6 +228,37 @@ namespace PluginPresets
 				}
 			}
 			return true;
+		}
+
+		// True when the stored preset name has, for every key it shares with
+		// live, the same text the store writes for that value, and shares at
+		// least one key. Keys only one side has are ignored. Memory only.
+		bool MatchesLive(const char* group, const char* name, const Field* live, int count) const
+		{
+			if (!group || !name || (!live && count > 0))
+				return false;
+
+			std::lock_guard<std::mutex> lock(m_mutex);
+			const Entry* entry = Find(group, name);
+			if (!entry)
+				return false;
+
+			bool shared = false;
+			for (int i = 0; i < count; ++i)
+			{
+				if (!live[i].key)
+					continue;
+				for (const StoredField& f : entry->fields)
+				{
+					if (f.key != live[i].key)
+						continue;
+					shared = true;
+					if (FormatValue(f.value) != FormatValue(live[i].value))
+						return false;
+					break;
+				}
+			}
+			return shared;
 		}
 
 		// Renames a stored preset. Returns false if the store is read-only,
@@ -503,11 +542,9 @@ namespace PluginPresets
 				content += "]\r\n";
 				for (const StoredField& f : p.fields)
 				{
-					char valStr[64];
-					snprintf(valStr, sizeof(valStr), "%.6f", f.value);
 					content += f.key;
 					content += "=";
-					content += valStr;
+					content += FormatValue(f.value);
 					content += "\r\n";
 				}
 				content += "\r\n";
@@ -628,19 +665,44 @@ namespace PluginPresets
 		bool renaming = false;
 		char renameBuf[kMaxNameLen] = {};
 		char errorMsg[128] = {};
+		bool pickedNone = false;          // "(none)" chosen since the last apply: no auto-select
+		bool scanned = false;             // liveHash is from a scan for a matching preset
+		unsigned long long liveHash = 0;  // fingerprint of the live values at that scan
 
 		// Selects nothing, so the next Save adds a new entry. Call it when a
-		// built-in preset is applied outside the row (a hotkey, say).
+		// built-in preset is applied outside the row (a hotkey, say). The row
+		// may then select a saved preset that equals the live values.
 		void ClearSelection()
 		{
 			selected[0] = '\0';
 			renaming = false;
+			pickedNone = false;
+			scanned = false;
 		}
 	};
+
+	// A fingerprint of the live values as the store writes them, to tell when
+	// they changed since the row last looked for a matching preset.
+	inline unsigned long long HashLive(const Field* fields, int count)
+	{
+		unsigned long long h = 1469598103934665603ull;
+		for (int i = 0; i < count; ++i)
+		{
+			const std::string text = FormatValue(fields[i].value);
+			for (const char* c = text.c_str(); *c; ++c)
+				h = (h ^ static_cast<unsigned char>(*c)) * 1099511628211ull;
+			h = (h ^ 0xFFu) * 1099511628211ull;
+		}
+		return h;
+	}
 
 	// A dropdown of the group's saved presets plus Save, Rename and Delete,
 	// beside (not replacing) the caller's built-in preset buttons.
 	//
+	//  With nothing selected, the first saved preset whose values equal the live
+	//        ones is selected, so Save over it works at once (e.g. after a
+	//        restart). Checked only when the live values change; not after an
+	//        explicit "(none)" until a preset is applied.
 	//  Save, a saved preset selected: asks "You're saving over <name>.
 	//        Continue?" and on Continue rewrites only that entry.
 	//  The dropdown's "(none)" item clears the selection. A plugin that applies
@@ -679,6 +741,29 @@ namespace PluginPresets
 		if (!selectedStillValid)
 			state.selected[0] = '\0';
 
+		if (state.selected[0])
+		{
+			state.pickedNone = false;
+		}
+		else if (!state.pickedNone)
+		{
+			getLive(fields);
+			const unsigned long long hash = HashLive(fields, fieldCount);
+			if (!state.scanned || hash != state.liveHash)
+			{
+				state.scanned = true;
+				state.liveHash = hash;
+				for (int i = 0; i < count; ++i)
+				{
+					if (!isBuiltin(names[i]) && store.MatchesLive(group, names[i], fields, fieldCount))
+					{
+						snprintf(state.selected, sizeof(state.selected), "%s", names[i]);
+						break;
+					}
+				}
+			}
+		}
+
 		ui->AlignTextToFramePadding();
 		ui->Text("Saved Presets");
 		ui->SameLine(0.0f, -1.0f);
@@ -688,13 +773,17 @@ namespace PluginPresets
 		if (ui->BeginCombo("##saved", preview))
 		{
 			if (ui->Selectable("(none)##nosel", state.selected[0] == '\0'))
+			{
 				state.ClearSelection();
+				state.pickedNone = true;
+			}
 			for (int i = 0; i < count; ++i)
 			{
 				const bool isSelected = (strcmp(names[i], state.selected) == 0);
 				if (ui->Selectable(names[i], isSelected))
 				{
 					snprintf(state.selected, sizeof(state.selected), "%s", names[i]);
+					state.pickedNone = false;
 					ApplySaved(store, group, state.selected, fields, fieldCount, getLive, apply);
 				}
 			}
@@ -811,7 +900,10 @@ namespace PluginPresets
 				if (store.Delete(group, state.deleteTarget))
 				{
 					if (strcmp(state.selected, state.deleteTarget) == 0)
+					{
 						state.ClearSelection();
+						state.pickedNone = true; // a deleted preset is not replaced by a twin
+					}
 				}
 				else
 					setError("Could not delete -- presets file unavailable.");
