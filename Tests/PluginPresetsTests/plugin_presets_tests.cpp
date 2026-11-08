@@ -536,6 +536,22 @@ int main(int argc, char** argv)
 				&& !store.Exists("Speed", "Custom 2"), "a vanished target writes nothing and says so");
 		}
 
+		// The Delete question likewise keeps the name it was opened for.
+		{
+			RowState st;
+			snprintf(st.selected, sizeof(st.selected), "%s", "Custom");
+			Fake::Reset();
+			Fake::clicks.insert("Delete");
+			Frame(store, st);
+			Frame(store, st);
+			snprintf(st.selected, sizeof(st.selected), "%s", "Slow"); // the selection moved
+			Fake::clicks.insert("Delete##confirm");
+			Frame(store, st);
+			Check(!store.Exists("Speed", "Custom") && store.Exists("Speed", "Slow"),
+				"Delete removes the entry the question named, not the moved selection");
+			Check(strcmp(st.selected, "Slow") == 0, "and leaves the new selection alone");
+		}
+
 		// A built-in preset in play: the suggested name carries its label; the built-in is never written.
 		RowState fresh3;
 		g_suggest = "Normal Custom";
@@ -618,7 +634,9 @@ int main(int argc, char** argv)
 		Fake::Reset();
 		Fake::clicks.insert("Save");
 		Frame(store, state);
-		Check(Fake::openPopups.empty() && !Fake::texts.empty(), "the row shows a message instead of saving");
+		Check(Fake::openPopups.empty()
+			&& Fake::Said("Presets file could not be read at start. Restart the game to use saved presets."),
+			"the row says the file could not be read instead of saving");
 		Check(ReadBytes(sb.file) == original, "and writes nothing");
 	}
 

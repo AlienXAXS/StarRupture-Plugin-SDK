@@ -624,13 +624,18 @@ namespace PluginPresets
 	{
 		char selected[kMaxNameLen] = {};
 		char overwriteTarget[kMaxNameLen] = {}; // the name the open save-over question is about
+		char deleteTarget[kMaxNameLen] = {};    // the name the open Delete question is about
 		bool renaming = false;
 		char renameBuf[kMaxNameLen] = {};
 		char errorMsg[128] = {};
 
 		// Selects nothing, so the next Save adds a new entry. Call it when a
 		// built-in preset is applied outside the row (a hotkey, say).
-		void ClearSelection() { selected[0] = '\0'; }
+		void ClearSelection()
+		{
+			selected[0] = '\0';
+			renaming = false;
+		}
 	};
 
 	// A dropdown of the group's saved presets plus Save, Rename and Delete,
@@ -638,10 +643,10 @@ namespace PluginPresets
 	//
 	//  Save, a saved preset selected: asks "You're saving over <name>.
 	//        Continue?" and on Continue rewrites only that entry.
-	//  The dropdown's "(none)" item clears the selection, and applying one of
-//        the caller's built-in buttons through the row's callables should call
-//        RowState::ClearSelection() so the next Save adds a new entry.
-//  Save, nothing selected (or a name that is a built-in): adds a new entry
+	//  The dropdown's "(none)" item clears the selection. A plugin that applies
+	//        one of its own built-in presets (a button or a hotkey) should call
+	//        RowState::ClearSelection() so the next Save adds a new entry.
+	//  Save, nothing selected (or a name that is a built-in): adds a new entry
 	//        named computeSuggest's base, made unique ("Custom", "Custom 2").
 	//  Rename / Delete: as before (Delete asks first).
 	//  When the store is read-only each of the three shows a message instead.
@@ -789,19 +794,25 @@ namespace PluginPresets
 			if (store.IsReadOnly())
 				setError(kReadOnlyMsg);
 			else
+			{
+				snprintf(state.deleteTarget, sizeof(state.deleteTarget), "%s", state.selected);
 				ui->OpenPopup(deletePopupId, 0);
+			}
 		}
 		ui->EndDisabled();
 
 		if (ui->BeginPopupModal(deletePopupId, nullptr, PluginWindowFlags_AlwaysAutoResize))
 		{
 			ui->Text("Delete this saved preset?");
-			ui->TextDisabled(state.selected);
+			ui->TextDisabled(state.deleteTarget);
 			ui->Spacing();
 			if (ui->SmallButton("Delete##confirm"))
 			{
-				if (store.Delete(group, state.selected))
-					state.selected[0] = '\0';
+				if (store.Delete(group, state.deleteTarget))
+				{
+					if (strcmp(state.selected, state.deleteTarget) == 0)
+						state.ClearSelection();
+				}
 				else
 					setError("Could not delete -- presets file unavailable.");
 				ui->CloseCurrentPopup();
