@@ -746,6 +746,27 @@ int main(int argc, char** argv)
 			Fake::Reset();
 			Check(ReadBytes(sb.file) == head + b + c && !fs::exists(sb.bak), "the store file is unchanged after all of it");
 		}
+
+		// The look for a match is gated on the live values changing: a preset that
+		// appears while they stay put is found only after they change.
+		{
+			Sandbox sb(head);
+			Store store;
+			store.LoadFile(sb.Path().c_str());
+			setLive(20.0f, 2.0f);
+			RowState row;
+			Frame(store, row);
+			Check(row.selected[0] == '\0', "no match yet");
+			Field f[2] = { { "speedPerSec", 20.0f }, { "boostMultiplier", 2.0f } };
+			store.Save("Speed", "B", f, 2);
+			Frame(store, row);
+			Check(row.selected[0] == '\0', "unchanged live values are not scanned again");
+			setLive(20.0f, 3.0f);
+			Frame(store, row);
+			setLive(20.0f, 2.0f);
+			Frame(store, row);
+			Check(strcmp(row.selected, "B") == 0, "a change in the live values triggers the next scan");
+		}
 		setLive(savedLive0, savedLive1);
 	}
 

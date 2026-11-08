@@ -685,7 +685,7 @@ namespace PluginPresets
 	// they changed since the row last looked for a matching preset.
 	inline unsigned long long HashLive(const Field* fields, int count)
 	{
-		unsigned long long h = 1469598103934665603ull;
+		unsigned long long h = 14695981039346656037ull;
 		for (int i = 0; i < count; ++i)
 		{
 			const std::string text = FormatValue(fields[i].value);
