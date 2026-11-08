@@ -15,7 +15,9 @@
 //    never replaces a .bak that is already there.
 //  - A file with a line it cannot understand is logged once and the store goes
 //    read-only for that file. Its readable entries still list and load, but
-//    Save, Rename and Delete refuse and leave the file untouched.
+//    Save, Rename and Delete refuse and leave the file untouched. The same
+//    holds for a file that exists but could not be read in full at load
+//    (locked, say); it is not read again until the next LoadFile.
 //  - A rewrite goes to "<file>.tmp" first and is renamed over the original, so
 //    a failed write leaves the old file in place.
 //
@@ -30,6 +32,7 @@
 #include "plugin_interface.h"
 
 #include <algorithm>
+#include <cerrno>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -79,17 +82,38 @@ namespace PluginPresets
 			m_path = filePath;
 			m_entries.clear();
 			m_readOnly = false;
+			m_loadFailed = false;
 			m_backupChecked = false;
-			Parse(ReadWholeFile(filePath));
+			std::string content;
+			if (!ReadWholeFile(filePath, content))
+			{
+				// The file exists but could not be read in full (locked,
+				// access denied, short read). Go read-only: writing now
+				// would replace the player's presets with just the new entry.
+				m_readOnly = true;
+				m_loadFailed = true;
+				Log("Presets file " + m_path + " exists but could not be read. The file is left unchanged and presets cannot be saved, renamed or deleted until the game restarts.");
+			}
+			Parse(content);
 			return true;
 		}
 
 		// True when the loaded file had a line the reader could not
-		// understand. Save, Rename and Delete then return false.
+		// understand, or exists but could not be read in full. Save, Rename
+		// and Delete then return false until the next LoadFile.
 		bool IsReadOnly() const
 		{
 			std::lock_guard<std::mutex> lock(m_mutex);
 			return m_readOnly;
+		}
+
+		// True when the file exists but could not be read in full at load (as
+		// opposed to having a line the reader does not understand). It is not
+		// read again until LoadFile is called.
+		bool LoadFailed() const
+		{
+			std::lock_guard<std::mutex> lock(m_mutex);
+			return m_loadFailed;
 		}
 
 		// Fills outNames with up to cap names in group, in byte order, and
@@ -132,7 +156,10 @@ namespace PluginPresets
 		// place if it exists, otherwise appends a new one. Rewrites the file.
 		// Returns false if the store is read-only, the name or group is not
 		// valid, or the file could not be written (the old file is kept).
-		bool Save(const char* group, const char* name, const Field* fields, int count)
+		// keepOtherKeys: when replacing an existing entry, also keep the stored
+		// keys fields does not supply (after the supplied ones, in their old
+		// order). The row passes true for save-over.
+		bool Save(const char* group, const char* name, const Field* fields, int count, bool keepOtherKeys = false)
 		{
 			if (!group || !name || (!fields && count > 0) || !ValidGroup(group) || !ValidName(name))
 				return false;
@@ -148,9 +175,20 @@ namespace PluginPresets
 				m_entries.push_back({ group, name, {} });
 				entry = &m_entries.back();
 			}
-			entry->fields.clear();
+			std::vector<StoredField> old;
+			old.swap(entry->fields);
 			for (int i = 0; i < count; ++i)
 				entry->fields.push_back({ fields[i].key, fields[i].value });
+			if (keepOtherKeys)
+			{
+				for (StoredField& o : old)
+				{
+					const bool supplied = std::any_of(entry->fields.begin(), entry->fields.end(),
+						[&](const StoredField& f) { return f.key == o.key; });
+					if (!supplied)
+						entry->fields.push_back(std::move(o));
+				}
+			}
 
 			return Commit(std::move(before));
 		}
@@ -303,23 +341,32 @@ namespace PluginPresets
 				m_log(line.c_str());
 		}
 
-		static std::string ReadWholeFile(const std::string& path)
+		// Reads the whole file into content. A missing file is fine (empty
+		// content, true). Any other open failure, or a short read, is false.
+		static bool ReadWholeFile(const std::string& path, std::string& content)
 		{
-			std::string content;
 			FILE* f = nullptr;
-			if (fopen_s(&f, path.c_str(), "rb") != 0 || !f)
-				return content;
+			const errno_t err = fopen_s(&f, path.c_str(), "rb");
+			if (err != 0 || !f)
+				return err == ENOENT;
 
+			bool complete = true;
 			fseek(f, 0, SEEK_END);
 			const long size = ftell(f);
 			fseek(f, 0, SEEK_SET);
-			if (size > 0)
+			if (size < 0)
+			{
+				complete = false;
+			}
+			else if (size > 0)
 			{
 				content.resize(static_cast<size_t>(size));
-				content.resize(fread(&content[0], 1, static_cast<size_t>(size), f));
+				const size_t got = fread(&content[0], 1, static_cast<size_t>(size), f);
+				content.resize(got);
+				complete = got == static_cast<size_t>(size);
 			}
 			fclose(f);
-			return content;
+			return complete;
 		}
 
 		// "[group:name]" body -> group, name. Splits on the first ':', so a
@@ -474,7 +521,9 @@ namespace PluginPresets
 				return false;
 			if (m_readOnly)
 			{
-				Log("Presets file " + m_path + " was not changed because it has lines this plugin cannot read.");
+				Log("Presets file " + m_path + (m_loadFailed
+					? " was not changed because it could not be read at start."
+					: " was not changed because it has lines this plugin cannot read."));
 				return false;
 			}
 			return true;
@@ -500,7 +549,14 @@ namespace PluginPresets
 			if (!m_backupChecked)
 			{
 				const fs::path bak = fs::path(m_path + ".bak");
-				if (fs::exists(path, ec) && !fs::exists(bak, ec))
+				const bool haveFile = fs::exists(path, ec);
+				const bool haveBak = !ec && fs::exists(bak, ec);
+				if (ec)
+				{
+					Log("Could not check " + m_path + " before backing it up (" + ec.message() + "); presets were not saved.");
+					return false;
+				}
+				if (haveFile && !haveBak)
 				{
 					fs::copy_file(path, bak, fs::copy_options::none, ec);
 					if (ec)
@@ -544,6 +600,7 @@ namespace PluginPresets
 		std::string m_path;
 		std::vector<Entry> m_entries;
 		bool m_readOnly = false;
+		bool m_loadFailed = false;
 		bool m_backupChecked = false;
 	};
 
@@ -566,9 +623,19 @@ namespace PluginPresets
 	struct RowState
 	{
 		char selected[kMaxNameLen] = {};
+		char overwriteTarget[kMaxNameLen] = {}; // the name the open save-over question is about
+		char deleteTarget[kMaxNameLen] = {};    // the name the open Delete question is about
 		bool renaming = false;
 		char renameBuf[kMaxNameLen] = {};
-		char errorMsg[96] = {};
+		char errorMsg[128] = {};
+
+		// Selects nothing, so the next Save adds a new entry. Call it when a
+		// built-in preset is applied outside the row (a hotkey, say).
+		void ClearSelection()
+		{
+			selected[0] = '\0';
+			renaming = false;
+		}
 	};
 
 	// A dropdown of the group's saved presets plus Save, Rename and Delete,
@@ -576,6 +643,9 @@ namespace PluginPresets
 	//
 	//  Save, a saved preset selected: asks "You're saving over <name>.
 	//        Continue?" and on Continue rewrites only that entry.
+	//  The dropdown's "(none)" item clears the selection. A plugin that applies
+	//        one of its own built-in presets (a button or a hotkey) should call
+	//        RowState::ClearSelection() so the next Save adds a new entry.
 	//  Save, nothing selected (or a name that is a built-in): adds a new entry
 	//        named computeSuggest's base, made unique ("Custom", "Custom 2").
 	//  Rename / Delete: as before (Delete asks first).
@@ -593,7 +663,9 @@ namespace PluginPresets
 		RowState& state)
 	{
 		auto setError = [&](const char* text) { snprintf(state.errorMsg, sizeof(state.errorMsg), "%s", text); };
-		const char* const kReadOnlyMsg = "Presets file has lines this plugin can't read; it was left unchanged.";
+		const char* const kReadOnlyMsg = store.LoadFailed()
+			? "Presets file could not be read at start. Restart the game to use saved presets."
+			: "Presets file has lines this plugin can't read; it was left unchanged.";
 
 		ui->PushIDStr(idScope);
 
@@ -612,9 +684,11 @@ namespace PluginPresets
 		ui->SameLine(0.0f, -1.0f);
 
 		ui->SetNextItemWidth(220.0f);
-		const char* preview = state.selected[0] ? state.selected : "(none saved)";
+		const char* preview = state.selected[0] ? state.selected : "(none)";
 		if (ui->BeginCombo("##saved", preview))
 		{
+			if (ui->Selectable("(none)##nosel", state.selected[0] == '\0'))
+				state.ClearSelection();
 			for (int i = 0; i < count; ++i)
 			{
 				const bool isSelected = (strcmp(names[i], state.selected) == 0);
@@ -640,6 +714,7 @@ namespace PluginPresets
 			else if (state.selected[0] && !isBuiltin(state.selected))
 			{
 				state.errorMsg[0] = '\0';
+				snprintf(state.overwriteTarget, sizeof(state.overwriteTarget), "%s", state.selected);
 				ui->OpenPopup(overwritePopupId, 0);
 			}
 			else
@@ -662,19 +737,26 @@ namespace PluginPresets
 			}
 		}
 
-		if (ui->BeginPopupModal(overwritePopupId, nullptr, 0))
+		if (ui->BeginPopupModal(overwritePopupId, nullptr, PluginWindowFlags_AlwaysAutoResize))
 		{
 			char question[kMaxNameLen + 48];
-			snprintf(question, sizeof(question), "You're saving over %s. Continue?", state.selected);
+			snprintf(question, sizeof(question), "You're saving over %s. Continue?", state.overwriteTarget);
 			ui->Text(question);
 			ui->Spacing();
 			if (ui->SmallButton("Continue##overwrite"))
 			{
-				getLive(fields);
-				if (store.Save(group, state.selected, fields, fieldCount))
-					state.errorMsg[0] = '\0';
+				if (!store.Exists(group, state.overwriteTarget))
+				{
+					setError("That preset no longer exists, so nothing was saved.");
+				}
 				else
-					setError("Could not save -- presets file unavailable.");
+				{
+					getLive(fields);
+					if (store.Save(group, state.overwriteTarget, fields, fieldCount, true))
+						state.errorMsg[0] = '\0';
+					else
+						setError("Could not save -- presets file unavailable.");
+				}
 				ui->CloseCurrentPopup();
 			}
 			ui->SameLine(0.0f, -1.0f);
@@ -712,19 +794,25 @@ namespace PluginPresets
 			if (store.IsReadOnly())
 				setError(kReadOnlyMsg);
 			else
+			{
+				snprintf(state.deleteTarget, sizeof(state.deleteTarget), "%s", state.selected);
 				ui->OpenPopup(deletePopupId, 0);
+			}
 		}
 		ui->EndDisabled();
 
-		if (ui->BeginPopupModal(deletePopupId, nullptr, 0))
+		if (ui->BeginPopupModal(deletePopupId, nullptr, PluginWindowFlags_AlwaysAutoResize))
 		{
 			ui->Text("Delete this saved preset?");
-			ui->TextDisabled(state.selected);
+			ui->TextDisabled(state.deleteTarget);
 			ui->Spacing();
 			if (ui->SmallButton("Delete##confirm"))
 			{
-				if (store.Delete(group, state.selected))
-					state.selected[0] = '\0';
+				if (store.Delete(group, state.deleteTarget))
+				{
+					if (strcmp(state.selected, state.deleteTarget) == 0)
+						state.ClearSelection();
+				}
 				else
 					setError("Could not delete -- presets file unavailable.");
 				ui->CloseCurrentPopup();
