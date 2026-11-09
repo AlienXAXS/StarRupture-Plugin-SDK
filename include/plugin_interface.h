@@ -1158,9 +1158,11 @@ static_assert(offsetof(PluginScanRequest, candidates)     == 56, "v72 starts whe
 //                           member's size on this build comes back in
 //                           PluginFieldResult::size, for a member whose type
 //                           differs between builds (a float on one, a double
-//                           on the next). The flag is for a reflected member
-//                           only: with NATIVE, CHECK, BITFIELD, a size row or
-//                           a non-zero size, the request is refused.
+//                           on the next). With NATIVE the running build's
+//                           own row serves the offset and its size comes
+//                           back; no row for the running build is refused.
+//                           With CHECK, BITFIELD, a size row or a non-zero
+//                           size, the request is refused.
 //   PLUGIN_FIELD_LATE       the class may not be loaded yet: a Blueprint generated
 //                           class (WBP_InventorySlot_C), which the game loads
 //                           with the screen that uses it and frees again. A
@@ -1212,7 +1214,11 @@ static_assert(offsetof(PluginScanRequest, candidates)     == 56, "v72 starts whe
 //                           with CHECK the running build must equal that row.
 //
 // member null asks for the size of className itself (with CHECK: that it is
-// still `size`).
+// still `size`). A struct the game reflects answers from its reflection data,
+// and the map's row for it (key = the class name alone, offset 0, size, mask 0)
+// is only a cross-check. A struct the game does not reflect (a plain C++ type)
+// is served from the row for the running changelist, and fails without one;
+// NATIVE changes nothing for a size request.
 //
 // The rows are the loader's own version map's first, under the request's key,
 // when that key names the same class and member (or a member the map records
@@ -1227,7 +1233,7 @@ enum PluginFieldFlags
     PLUGIN_FIELD_NATIVE    = 1 << 0,
     PLUGIN_FIELD_CHECK     = 1 << 1,
     PLUGIN_FIELD_BITFIELD  = 1 << 2,
-    PLUGIN_FIELD_ANY_SIZE  = 1 << 3,   // v74: take the reflected size; size must be 0
+    PLUGIN_FIELD_ANY_SIZE  = 1 << 3,   // v74: take the reflected size (with NATIVE, the running build's row size, row required); size must be 0
     PLUGIN_FIELD_LATE      = 1 << 4,   // v75: the class may not be loaded yet (a Blueprint class); pending until it is, retry from the game thread
 };
 
