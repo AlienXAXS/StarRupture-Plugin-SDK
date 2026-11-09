@@ -190,7 +190,7 @@ struct PluginBitField : PluginFieldSpec
 // byte offset on the build the plugin was compiled for, and the loader reports
 // the size the running build has in `resolvedSize`, as SR_FIELD_ANY_SIZE does.
 // T is the type to read it as, e.g. uint8_t for a block read by `resolvedSize`.
-// Needs a loader carrying feat/native-any-size: an older loader refuses the
+// Needs loader v1.23.2 or later: an older loader refuses the
 // NATIVE | ANY_SIZE combination and the request fails.
 #define SR_NATIVE_ANY_SIZE(T, Class, Member, offset) \
     PluginField<T>{ { #Class "::" #Member, #Class, #Member, PLUGIN_FIELD_NATIVE | PLUGIN_FIELD_ANY_SIZE, 0, (offset) } }
@@ -212,8 +212,8 @@ struct PluginBitField : PluginFieldSpec
 // not UCrEnviroWaveSubsystem). Param is a member of the struct, "ReturnValue" for
 // the return. The loader reports the offset in `offset` and the size in
 // `resolvedSize`; a function name more than one class has, or none, is refused.
-// Hand it to PluginMap::ParamsBlockOf with SR_PARAMS_SIZE. Needs a loader
-// carrying feat/param-offsets.
+// Hand it to PluginMap::ParamsBlockOf with SR_PARAMS_SIZE. Needs loader
+// v1.23.2 or later.
 //
 // Class may be a Blueprint generated class (WBP_InventorySlot_C, the name ends
 // in _C). Only parameters count, not the locals of the Blueprint function. Such
@@ -221,8 +221,8 @@ struct PluginBitField : PluginFieldSpec
 // not loaded when plugins load: the row then does not resolve yet (the key is
 // pending, not refused) and the feature that lists it is off until
 // PluginMap::ResolveLateFields resolves it from the game thread. That needs a
-// loader with PLUGIN_FIELD_LATE (interface v75, the loader after 1.23.1 that
-// carries it); an older loader refuses a Blueprint class, so the feature stays
+// loader with PLUGIN_FIELD_LATE (interface v75, loader v1.23.2 or
+// later); an older loader refuses a Blueprint class, so the feature stays
 // off there. A native class is resolved as before.
 #define SR_PARAM(Class, Function, Param) \
     PluginFieldSpec{ #Class "_" #Function "::" #Param, #Class "_" #Function, #Param, PLUGIN_FIELD_ANY_SIZE | PLUGIN_FIELD_LATE, 0, \

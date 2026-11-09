@@ -851,13 +851,13 @@ SDK::UWorld* world = PluginSdkRuntime::GetWorld();     // instead of SDK::UWorld
 | `SR_FIELD(T, Class, Member, flags)` | A `PluginField<T>`: `In(object)` gives the member or null. `flags` takes `PLUGIN_FIELD_NATIVE` and `PLUGIN_FIELD_CHECK`. |
 | `SR_BITFIELD(Class, Member)` | A `PluginBitField`: `Get(object)` and `Set(object, value)`. |
 | `SR_FIELD_ANY_SIZE(Class, Member, flags)` | A `PluginFieldSpec` requested with `PLUGIN_FIELD_ANY_SIZE` (size 0), for a reflected member whose size differs between builds. After the request, `resolvedSize` holds the size the loader reports on the running build and `offset` where it is. |
-| `SR_NATIVE_ANY_SIZE(T, Class, Member, offset)` | A `PluginField<T>` requested with `PLUGIN_FIELD_NATIVE \| PLUGIN_FIELD_ANY_SIZE` (size 0): a member reflection does not describe, at its compiled `offset`, whose size differs between builds. `resolvedSize` holds the size the loader reports on the running build. Needs a loader carrying feat/native-any-size. |
+| `SR_NATIVE_ANY_SIZE(T, Class, Member, offset)` | A `PluginField<T>` requested with `PLUGIN_FIELD_NATIVE \| PLUGIN_FIELD_ANY_SIZE` (size 0): a member reflection does not describe, at its compiled `offset`, whose size differs between builds. `resolvedSize` holds the size the loader reports on the running build. Needs loader v1.23.2 or later. |
 | `SR_SIZE_CHECK(Class)` | A checked class size: the request fails on a build where the class's size changed. |
 | `SR_SIZE(Class)` | An unchecked class size: `resolvedSize` holds the size the game reflects on the running build. Step through an array with it using `PluginMap::ElementAt` (see [Struct sizes: live or checked](#struct-sizes-live-or-checked)). 0 = not resolved. |
 | `PluginMap::ElementAt(array, index, size)` | The address of element `index` of a game `TArray` (or, with `ElementAt(data, count, index, size)`, of a buffer), stepped by the `SR_SIZE` row's `resolvedSize`, not a `sizeof`. Null when the array is empty, `index` is out of range or the size did not resolve. |
 | `PluginMap::StructBuffer(size)` | A zeroed, 16-aligned block of an `SR_SIZE` row's `resolvedSize`; empty when the size did not resolve. See [When a struct's size can change](#when-a-structs-size-can-change-live-size-check-buffer-map-walk). |
 | `PluginMap::ParamsBlock(parmsSize, params)`, `PluginMap::Call(object, function, block)` | A `ProcessEvent` parameter block sized from the function's live `ParmsSize`, with each parameter at its reflected offset; invalid when a parameter does not fit. |
-| `SR_PARAMS_SIZE(Class, Function)`, `SR_PARAM(Class, Function, Param)`, `PluginMap::ParamsBlockOf(size, { &param, ... })` | A function's `ParmsSize` and one parameter's offset and size as the running game reflects them (`Params::<Class>_<Function>`), and the `ParamsBlock` built from them. Also for a Blueprint class that is not loaded yet: pending until `PluginMap::ResolveLateFields` resolves it from the game thread. Needs a loader carrying feat/param-offsets. |
+| `SR_PARAMS_SIZE(Class, Function)`, `SR_PARAM(Class, Function, Param)`, `PluginMap::ParamsBlockOf(size, { &param, ... })` | A function's `ParmsSize` and one parameter's offset and size as the running game reflects them (`Params::<Class>_<Function>`), and the `ParamsBlock` built from them. Also for a Blueprint class that is not loaded yet: pending until `PluginMap::ResolveLateFields` resolves it from the game thread. Needs loader v1.23.2 or later. |
 | `PluginMap::ScriptMapView(map, MapLayout(...))`, `ScriptSetView(set, SetLayout(...))` | Walks a game `TMap` / `TSet` at the stride computed from the live key and value sizes: `ForEach`, and `Find` by key. Invalid, with a `Reason()`, when the layout is not the container's. |
 | `PluginMap::EnumValue(enumName, entry, value)` | A game enum entry's number, read by name from the running game's `UEnum`: `Found` (written to `value`), `EntryMissing` or `EnumMissing`. Game thread only; look it up once and keep it. |
 | `PluginMap::ResolveFields(scan, self, fields...)` | `ResolveField` for each, every one asked even after a failure, so the log lists them all. Sends `PLUGIN_GAME_BUILT_CL` as `builtCL`. True when all resolved. |
@@ -1014,8 +1014,7 @@ size (the function's `ParmsSize`, in `resolvedSize`) and `SR_PARAM(Class, Functi
 parameter (its reflected offset in `offset`, its size in `resolvedSize`; `Param` is `ReturnValue` for
 the return). `Class` is the game's class name without its prefix letter, as Dumper-7 spells it in the
 struct. `PluginMap::ParamsBlockOf` turns the resolved rows into a block. A function name that more
-than one class has, or none, is refused, so the feature is off. Needs a loader carrying
-`feat/param-offsets`.
+than one class has, or none, is refused, so the feature is off. Needs loader v1.23.2 or later.
 
 `Class` may be a Blueprint generated class (`WBP_InventorySlot_C`). The game loads it with the
 screen that uses it and frees it again, so it is normally not loaded in `OnPluginLoadHooks`: the
@@ -1025,7 +1024,7 @@ game thread, for example once per tick, until it returns true, then set the feat
 It asks only the rows still unresolved; the loader looks at the game at most every two seconds per
 key and never once resolved. The numbers then hold for the process, even when the class is freed
 and reloaded. Only parameters count, not the locals of the Blueprint function. This needs a loader
-with `PLUGIN_FIELD_LATE` (interface v75, the loader after 1.23.1 that carries it); an older loader
+with `PLUGIN_FIELD_LATE` (interface v75, loader v1.23.2 or later); an older loader
 ignores the flag and refuses a Blueprint class, so the feature stays off there. While pending,
 `ParamsBlockOf` is invalid. To check that one parameter is the only one, compare the block size
 with that parameter's end: `block.Size() == inSize.offset + inSize.resolvedSize`.
