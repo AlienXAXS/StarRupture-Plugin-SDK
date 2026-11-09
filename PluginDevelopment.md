@@ -851,7 +851,7 @@ SDK::UWorld* world = PluginSdkRuntime::GetWorld();     // instead of SDK::UWorld
 | `SR_FIELD(T, Class, Member, flags)` | A `PluginField<T>`: `In(object)` gives the member or null. `flags` takes `PLUGIN_FIELD_NATIVE` and `PLUGIN_FIELD_CHECK`. |
 | `SR_BITFIELD(Class, Member)` | A `PluginBitField`: `Get(object)` and `Set(object, value)`. |
 | `SR_FIELD_ANY_SIZE(Class, Member, flags)` | A `PluginFieldSpec` requested with `PLUGIN_FIELD_ANY_SIZE` (size 0), for a reflected member whose size differs between builds. After the request, `resolvedSize` holds the size the loader reports on the running build and `offset` where it is. |
-| `SR_NATIVE_ANY_SIZE(T, Class, Member, offset)` | A `PluginField<T>` requested with `PLUGIN_FIELD_NATIVE \| PLUGIN_FIELD_ANY_SIZE` (size 0): a member reflection does not describe, at its compiled `offset`, whose size differs between builds. `resolvedSize` holds the size the loader reports on the running build. Needs loader v1.23.2 or later. |
+| `SR_NATIVE_ANY_SIZE(T, Class, Member, offset)` | A `PluginField<T>` requested with `PLUGIN_FIELD_NATIVE \| PLUGIN_FIELD_ANY_SIZE` (size 0): a member reflection does not describe, at its compiled `offset`, whose size differs between builds. `resolvedSize` holds the size the loader reports on the running build. Needs loader v1.23.2 or later. List its key in a `PluginMap::Feature`: on an older loader that refuses it, only that feature turns off and the plugin still loads. |
 | `SR_SIZE_CHECK(Class)` | A checked class size: the request fails on a build where the class's size changed. |
 | `SR_SIZE(Class)` | An unchecked class size: `resolvedSize` holds the size the game reflects on the running build. Step through an array with it using `PluginMap::ElementAt` (see [Struct sizes: live or checked](#struct-sizes-live-or-checked)). 0 = not resolved. |
 | `PluginMap::ElementAt(array, index, size)` | The address of element `index` of a game `TArray` (or, with `ElementAt(data, count, index, size)`, of a buffer), stepped by the `SR_SIZE` row's `resolvedSize`, not a `sizeof`. Null when the array is empty, `index` is out of range or the size did not resolve. |
@@ -1014,7 +1014,7 @@ size (the function's `ParmsSize`, in `resolvedSize`) and `SR_PARAM(Class, Functi
 parameter (its reflected offset in `offset`, its size in `resolvedSize`; `Param` is `ReturnValue` for
 the return). `Class` is the game's class name without its prefix letter, as Dumper-7 spells it in the
 struct. `PluginMap::ParamsBlockOf` turns the resolved rows into a block. A function name that more
-than one class has, or none, is refused, so the feature is off. Needs loader v1.23.2 or later.
+than one class has, or none, is refused, so the feature is off. Needs loader v1.23.2 or later. List its key in a `PluginMap::Feature`: on an older loader that refuses it, only that feature turns off and the plugin still loads.
 
 `Class` may be a Blueprint generated class (`WBP_InventorySlot_C`). The game loads it with the
 screen that uses it and frees it again, so it is normally not loaded in `OnPluginLoadHooks`: the
@@ -1025,7 +1025,7 @@ It asks only the rows still unresolved; the loader looks at the game at most eve
 key and never once resolved. The numbers then hold for the process, even when the class is freed
 and reloaded. Only parameters count, not the locals of the Blueprint function. This needs a loader
 with `PLUGIN_FIELD_LATE` (interface v75, loader v1.23.2 or later); an older loader
-ignores the flag and refuses a Blueprint class, so the feature stays off there. While pending,
+ignores the flag and refuses a Blueprint class, so the feature stays off there. List its key in a `PluginMap::Feature`: on an older loader that refuses it, only that feature turns off and the plugin still loads. While pending,
 `ParamsBlockOf` is invalid. To check that one parameter is the only one, compare the block size
 with that parameter's end: `block.Size() == inSize.offset + inSize.resolvedSize`.
 

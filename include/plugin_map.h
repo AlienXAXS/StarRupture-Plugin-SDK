@@ -191,7 +191,9 @@ struct PluginBitField : PluginFieldSpec
 // the size the running build has in `resolvedSize`, as SR_FIELD_ANY_SIZE does.
 // T is the type to read it as, e.g. uint8_t for a block read by `resolvedSize`.
 // Needs loader v1.23.2 or later: an older loader refuses the
-// NATIVE | ANY_SIZE combination and the request fails.
+// NATIVE | ANY_SIZE combination and the request fails. List the key in a
+// PluginMap::Feature: on an older loader only that feature then turns off and
+// the plugin still loads.
 #define SR_NATIVE_ANY_SIZE(T, Class, Member, offset) \
     PluginField<T>{ { #Class "::" #Member, #Class, #Member, PLUGIN_FIELD_NATIVE | PLUGIN_FIELD_ANY_SIZE, 0, (offset) } }
 // The size of an SDK class, checked on the running build (PLUGIN_FIELD_CHECK).
@@ -223,7 +225,9 @@ struct PluginBitField : PluginFieldSpec
 // PluginMap::ResolveLateFields resolves it from the game thread. That needs a
 // loader with PLUGIN_FIELD_LATE (interface v75, loader v1.23.2 or
 // later); an older loader refuses a Blueprint class, so the feature stays
-// off there. A native class is resolved as before.
+// off there. List the key in a PluginMap::Feature: on an older loader only
+// that feature turns off and the plugin still loads. A native class is
+// resolved as before.
 #define SR_PARAM(Class, Function, Param) \
     PluginFieldSpec{ #Class "_" #Function "::" #Param, #Class "_" #Function, #Param, PLUGIN_FIELD_ANY_SIZE | PLUGIN_FIELD_LATE, 0, \
                      static_cast<int32_t>(offsetof(SDK::Params::Class##_##Function, Param)) }

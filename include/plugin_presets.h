@@ -718,6 +718,9 @@ namespace PluginPresets
 	//   apply(const Field* f, int count)     put a loaded preset into effect
 	//   isBuiltin(const char* name) -> bool  true for the caller's built-in names
 	//   computeSuggest(char* out, int cap)   base name for a new entry
+	// getLive (called every frame) and apply run on the render thread, so they
+	// must not touch game objects (UObjects): read and write only the plugin's
+	// own settings there.
 	template <typename GetLiveFields, typename ApplyFields, typename IsBuiltinName, typename ComputeSuggestedBase>
 	inline void RenderSavedRow(IModLoaderImGui* ui, Store& store, const char* idScope, const char* group,
 		Field* fields, int fieldCount,
