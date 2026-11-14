@@ -31,11 +31,19 @@
 // (PLUGIN_INTERFACE_VERSION): a loader with a lower maximum then refuses the
 // plugin instead of running it on a shorter table.
 //
+// Size icons from the loader's font, so they grow with it. SizeForFont(28.0f)
+// is 28 pixels at the default font and larger when the player raises the font
+// scale. Work the size out once per frame and use it for every row. Use as few
+// distinct sizes per picture as you can: the loader keeps 3 sharp copies of
+// each picture, and 256 in all. The result is whole pixels, so it stays steady
+// while the font does not change.
+//
 // The image is valid for this frame only. Nothing is kept: ask again on the
 // next frame.
 
 #include "plugin_interface.h"
 
+#include <cmath>
 #include <cstdint>
 
 namespace PluginImages
@@ -50,6 +58,27 @@ namespace PluginImages
 	// The smallest size an image is drawn at, in screen pixels. Below this an
 	// icon cannot be read. Image raises a smaller size to this.
 	constexpr float kMinSize = 28.0f;
+
+	// The largest size the library stores a picture at, in screen pixels.
+	constexpr float kMaxSize = 256.0f;
+
+	// The loader's default overlay font size, in pixels.
+	constexpr float kDefaultFontSize = 15.0f;
+
+	// The size for a font of fontSize, given the size wanted at defaultFontSize:
+	// sizeAtDefault * fontSize / defaultFontSize, in whole pixels, between
+	// kMinSize and kMaxSize.
+	inline float SizeForFont(float sizeAtDefault, float fontSize, float defaultFontSize)
+	{
+		const float size = std::floor(sizeAtDefault * fontSize / defaultFontSize + 0.5f);
+		return size < kMinSize ? kMinSize : (size > kMaxSize ? kMaxSize : size);
+	}
+
+	// The same for the loader's current font. imgui is the render callback's.
+	inline float SizeForFont(IModLoaderImGui* imgui, float sizeAtDefault)
+	{
+		return SizeForFont(sizeAtDefault, imgui ? imgui->GetFontSize() : kDefaultFontSize, kDefaultFontSize);
+	}
 
 	namespace detail
 	{

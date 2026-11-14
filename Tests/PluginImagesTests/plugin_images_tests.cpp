@@ -242,6 +242,22 @@ int main()
 		Check(g_seen.dummies == 1 && g_seen.images == 0, "null imgui does nothing");
 	}
 
+	{
+		using PluginImages::SizeForFont;
+		const float d = PluginImages::kDefaultFontSize;
+		Check(SizeForFont(28.0f, d, d) == 28.0f && SizeForFont(40.0f, d, d) == 40.0f, "the default font gives the same size");
+		Check(SizeForFont(28.0f, 18.0f, d) == 34.0f, "an 18 px font gives 34 for 28");
+		Check(SizeForFont(40.0f, 18.0f, d) == 48.0f, "an 18 px font gives 48 for 40");
+		Check(SizeForFont(28.0f, 7.0f, d) == PluginImages::kMinSize, "a small font is raised to kMinSize");
+		Check(SizeForFont(40.0f, 150.0f, d) == PluginImages::kMaxSize, "a large font is capped at kMaxSize");
+		Check(SizeForFont(45.0f, 20.0f, 15.0f) == 60.0f, "an exact result is kept");
+		Check(SizeForFont(31.5f, 20.0f, 20.0f) == 32.0f, "31.5 rounds up to 32");
+		Check(SizeForFont(31.4f, 20.0f, 20.0f) == 31.0f, "31.4 rounds down to 31");
+		IModLoaderImGui big{};
+		big.GetFontSize = []() { return 18.0f; };
+		Check(SizeForFont(&big, 40.0f) == 48.0f, "the wrapper reads the loader's font size");
+	}
+
 	printf("%d checks, %d failed\n", g_checks, g_failed);
 	return g_failed ? 1 : 0;
 }
