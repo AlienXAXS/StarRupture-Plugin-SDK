@@ -4,6 +4,7 @@
 #include <plugin_images.h>
 
 #include <cstdio>
+#include <cstring>
 #include <limits>
 
 static int g_checks = 0;
@@ -70,6 +71,65 @@ namespace
 
 	constexpr int kWaiting = 1, kNoImage = 3; // PLUGIN_IMAGE_WAITING, PLUGIN_IMAGE_NO_IMAGE
 	const float kSize = PluginImages::kMinSize;
+}
+
+namespace
+{
+	// A fake of the cursor and group maths IconRow relies on, with a call log.
+	struct Row
+	{
+		char  log[256] = "";
+		int   pushes = 0, pops = 0, begins = 0, ends = 0;
+		float y = 0.0f, lineTop = 0.0f, lineH = 0.0f, spacing = 6.0f, textH = 15.0f;
+		float groupStart[4] = {}, groupBottom[4] = {}, savedLineH[4] = {};
+		int   depth = 0;
+		float imageY = -1.0f;
+	} g_row;
+
+	void Log(char c) { size_t n = strlen(g_row.log); g_row.log[n] = c; g_row.log[n + 1] = 0; }
+	void NoteItem(float h)
+	{
+		g_row.lineTop = g_row.y;
+		if (h > g_row.lineH) g_row.lineH = h;
+		if (g_row.depth > 0 && g_row.y + h > g_row.groupBottom[g_row.depth - 1])
+			g_row.groupBottom[g_row.depth - 1] = g_row.y + h;
+		g_row.y += g_row.lineH + g_row.spacing;
+		g_row.lineH = 0.0f;
+	}
+	void RowPush(const char*) { ++g_row.pushes; Log('P'); }
+	void RowPop() { ++g_row.pops; Log('p'); }
+	void RowBegin()
+	{
+		++g_row.begins; Log('B');
+		g_row.groupStart[g_row.depth] = g_row.y;
+		g_row.groupBottom[g_row.depth] = g_row.y;
+		g_row.savedLineH[g_row.depth] = g_row.lineH; // a group opens a fresh line
+		g_row.lineH = 0.0f;
+		++g_row.depth;
+	}
+	void RowEnd()
+	{
+		++g_row.ends; Log('E');
+		--g_row.depth;
+		const float top = g_row.groupStart[g_row.depth], h = g_row.groupBottom[g_row.depth] - top;
+		g_row.y = top;
+		g_row.lineH = g_row.savedLineH[g_row.depth];
+		NoteItem(h);
+	}
+	void RowSameLine(float, float) { Log('S'); g_row.y = g_row.lineTop; }
+	float RowGetY() { return g_row.y; }
+	void RowSetY(float y) { Log('Y'); g_row.y = y; }
+	float RowTextH() { return g_row.textH; }
+	float RowTextHS() { return g_row.textH + g_row.spacing; }
+	bool RowVisible(float, float) { return true; }
+	void RowImage(PluginTextureHandle, float, float h)
+	{
+		Log('I');
+		g_row.imageY = g_row.y;
+		NoteItem(h);
+		g_row.lineH = h; // SameLine restores the picture's height as the line height
+	}
+	void RowText() { Log('T'); NoteItem(g_row.textH); }
 }
 
 int main()
@@ -288,6 +348,40 @@ int main()
 		theme.GetTextLineHeightWithSpacing = []() { return 21.0f; };
 		Check(SizeForLines(&theme, 1) == 28.0f && SizeForLines(&theme, 2) == 36.0f, "the wrapper reads the loader's theme");
 		Check(SizeForLines(static_cast<IModLoaderImGui*>(nullptr), 2) == 36.0f, "null imgui uses the default theme");
+	}
+
+	{
+		IModLoaderImGui g{};
+		g.PushIDStr = &RowPush; g.PopID = &RowPop; g.BeginGroup = &RowBegin; g.EndGroup = &RowEnd;
+		g.SameLine = &RowSameLine; g.GetCursorPosY = &RowGetY; g.SetCursorPosY = &RowSetY;
+		g.GetTextLineHeight = &RowTextH; g.GetTextLineHeightWithSpacing = &RowTextHS;
+		g.IsRectVisible = &RowVisible;
+		IPluginImGuiTextures t{};
+		t.Image = &RowImage;
+		FakeImages imgs{ &FakeGetSized, &FakeState };
+		HooksWithTable h{ &imgs, &t };
+
+		// Picture taller than the text: 1 line, 15 high text, 28 picture.
+		Reset();
+		g_seen.handle = handle;
+		g_row = Row{};
+		g_row.y = 100.0f;
+		PluginImages::IconRow(&g, &h, "row", 7, 1, []() { RowText(); });
+		Check(g_row.pushes == 1 && g_row.pops == 1 && g_row.begins == 1 && g_row.ends == 1, "IconRow balances Push/Pop and Begin/EndGroup");
+		Check(strcmp(g_row.log, "PISBYTEp") == 0, "IconRow call order: push, image, same line, group, shift, text, end, pop");
+		Check(g_row.y == 100.0f + 28.0f + g_row.spacing, "picture taller: the next line is at startY + size + spacing");
+
+		// Text taller than the picture: 300 high text, picture capped at kMaxSize.
+		g_row = Row{};
+		g_row.y = 100.0f;
+		g_row.textH = 300.0f;
+		PluginImages::IconRow(&g, &h, "row", 7, 1, []() { RowText(); });
+		Check(g_row.pushes == 1 && g_row.pops == 1 && g_row.begins == 1 && g_row.ends == 1, "IconRow balances pairs, text taller");
+		Check(g_row.y == 100.0f + 300.0f + g_row.spacing, "text taller: the next line is at startY + text height + spacing");
+		Check(strcmp(g_row.log, "PYISYBTEp") == 0 && g_row.imageY == 122.0f, "text taller: the picture is shifted by whole pixels before it is drawn");
+
+		PluginImages::IconRow(&g, &h, nullptr, 7, 1, []() {});
+		Check(g_row.pushes == 2 && g_row.pops == 2, "a null id does not crash and still balances");
 	}
 
 	printf("%d checks, %d failed\n", g_checks, g_failed);

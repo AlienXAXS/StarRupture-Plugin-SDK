@@ -189,14 +189,20 @@ namespace PluginImages
 		const float textHeight = LinesHeight(lines, lineHeight, imgui->GetTextLineHeightWithSpacing() - lineHeight);
 		const float startY = imgui->GetCursorPosY();
 
-		imgui->PushIDStr(id);
-		// The shorter side moves down by half the difference.
+		imgui->PushIDStr(id ? id : "");
+		// The shorter side moves down by half the difference, on whole pixels so
+		// the picture stays a 1:1 copy.
 		if (textHeight > size)
-			imgui->SetCursorPosY(startY + (textHeight - size) * 0.5f);
+			imgui->SetCursorPosY(startY + std::floor((textHeight - size) * 0.5f));
 		Image(imgui, hooks, image, size, size);
 		imgui->SameLine(0.0f, -1.0f);
-		imgui->SetCursorPosY(startY + (size > textHeight ? (size - textHeight) * 0.5f : 0.0f));
+		// The group starts on the row's first line, so the next line lands below
+		// the taller side.
+		if (textHeight > size)
+			imgui->SetCursorPosY(startY);
 		imgui->BeginGroup();
+		if (size > textHeight)
+			imgui->SetCursorPosY(startY + std::floor((size - textHeight) * 0.5f));
 		drawText();
 		imgui->EndGroup();
 		imgui->PopID();
