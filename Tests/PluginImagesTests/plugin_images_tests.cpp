@@ -4,6 +4,7 @@
 #include <plugin_images.h>
 
 #include <cstdio>
+#include <limits>
 
 static int g_checks = 0;
 static int g_failed = 0;
@@ -256,6 +257,15 @@ int main()
 		IModLoaderImGui big{};
 		big.GetFontSize = []() { return 18.0f; };
 		Check(SizeForFont(&big, 40.0f) == 48.0f, "the wrapper reads the loader's font size");
+		Check(SizeForFont(28.0f, 0.0f, d) == 28.0f, "font 0 gives 28");
+		Check(SizeForFont(28.0f, -5.0f, d) == 28.0f, "a negative font gives 28");
+		Check(SizeForFont(static_cast<IModLoaderImGui*>(nullptr), 40.0f) == 40.0f, "null imgui uses the default font");
+		Check(SizeForFont(static_cast<IModLoaderImGui*>(nullptr), 5.0f) == PluginImages::kMinSize, "null imgui clamps sizeAtDefault");
+		const float nan = std::numeric_limits<float>::quiet_NaN();
+		const float inf = std::numeric_limits<float>::infinity();
+		const float rn = SizeForFont(nan, 18.0f, d), ri = SizeForFont(28.0f, inf, d);
+		Check(rn >= PluginImages::kMinSize && rn <= PluginImages::kMaxSize, "NaN stays in range");
+		Check(ri >= PluginImages::kMinSize && ri <= PluginImages::kMaxSize, "inf stays in range");
 	}
 
 	printf("%d checks, %d failed\n", g_checks, g_failed);
