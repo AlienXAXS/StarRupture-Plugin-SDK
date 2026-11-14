@@ -81,6 +81,35 @@ namespace PluginImages
 		return SizeForFont(sizeAtDefault, imgui ? imgui->GetFontSize() : kDefaultFontSize, kDefaultFontSize);
 	}
 
+	// The height of lines text lines, in pixels: lines line heights with the
+	// spacing between them. A count under 1 is taken as 1.
+	inline float LinesHeight(int lines, float lineHeight, float spacingY)
+	{
+		if (lines < 1)
+			lines = 1;
+		return lines * lineHeight + (lines - 1) * spacingY;
+	}
+
+	// The picture size that matches lines text lines, in whole pixels between
+	// kMinSize and kMaxSize. At the default theme (15 px font, ItemSpacing.y 6)
+	// the lines are 15 and 36 pixels, so one line gives 28 (the floor) and two
+	// give 36.
+	inline float SizeForLines(int lines, float lineHeight, float spacingY)
+	{
+		const float size = std::floor(LinesHeight(lines, lineHeight, spacingY) + 0.5f);
+		// A NaN fails the first test, so it lands on kMinSize.
+		return !(size >= kMinSize) ? kMinSize : (size > kMaxSize ? kMaxSize : size);
+	}
+
+	// The same for the loader's current font and spacing.
+	inline float SizeForLines(IModLoaderImGui* imgui, int lines)
+	{
+		if (!imgui)
+			return SizeForLines(lines, kDefaultFontSize, 6.0f);
+		const float lineHeight = imgui->GetTextLineHeight();
+		return SizeForLines(lines, lineHeight, imgui->GetTextLineHeightWithSpacing() - lineHeight);
+	}
+
 	namespace detail
 	{
 		// The value of PLUGIN_IMAGE_NO_IMAGE.
@@ -141,5 +170,35 @@ namespace PluginImages
 
 			imgui->Dummy(w, h);
 		}
+	}
+
+	// A picture beside lines lines of text. The picture is SizeForLines tall;
+	// drawText draws the text, one Text per line, and runs inside a group.
+	// Whichever side is shorter is centred on the other. id must be unique
+	// among the rows of the window (it goes on the ID stack) and image is the
+	// library id. Text that wraps to more lines than it says is not measured:
+	// the picture stays as sized.
+	template <class Hooks, class Fn>
+	void IconRow(IModLoaderImGui* imgui, Hooks* hooks, const char* id, uint32_t image, int lines, Fn&& drawText)
+	{
+		if (!imgui)
+			return;
+
+		const float size = SizeForLines(imgui, lines);
+		const float lineHeight = imgui->GetTextLineHeight();
+		const float textHeight = LinesHeight(lines, lineHeight, imgui->GetTextLineHeightWithSpacing() - lineHeight);
+		const float startY = imgui->GetCursorPosY();
+
+		imgui->PushIDStr(id);
+		// The shorter side moves down by half the difference.
+		if (textHeight > size)
+			imgui->SetCursorPosY(startY + (textHeight - size) * 0.5f);
+		Image(imgui, hooks, image, size, size);
+		imgui->SameLine(0.0f, -1.0f);
+		imgui->SetCursorPosY(startY + (size > textHeight ? (size - textHeight) * 0.5f : 0.0f));
+		imgui->BeginGroup();
+		drawText();
+		imgui->EndGroup();
+		imgui->PopID();
 	}
 }

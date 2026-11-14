@@ -2335,6 +2335,19 @@ The helper keeps nothing, so call it again on the next frame. Call it from a ren
 
 **Size from the font.** `PluginImages::SizeForFont(imgui, sizeAtDefault)` gives the size for the loader's current font, so icons grow with it. Pass the size you want at the default 15 px font (`PluginImages::kDefaultFontSize`): `SizeForFont(imgui, 28.0f)` for one-line rows and `SizeForFont(imgui, 40.0f)` for two-line rows. At an 18 px font those are 34 and 48. The result is whole pixels, at least `kMinSize` and at most `kMaxSize` (256). Work it out once per frame and use as few distinct sizes per picture as you can: the loader keeps 3 sharp copies of each picture and 256 in all. `SizeForFont(sizeAtDefault, fontSize, defaultFontSize)` is the same sum for any font size.
 
+**Icon beside text.** `PluginImages::IconRow(imgui, hooks, id, image, lines, drawText)` draws the picture beside `lines` lines of text. The picture is as tall as those lines (line heights plus the spacing between them) in the current font, in whole pixels from `kMinSize` to `kMaxSize`. At the default theme one line gives 28 (the floor) and two lines give 36. The text goes in a group, and whichever side is shorter is centred on the other. `id` goes on the ID stack, so give each row its own. The size comes from `lines` and the font only, so a line that wraps does not change it. `PluginImages::SizeForLines(imgui, lines)` gives the same size on its own.
+
+```cpp
+for (const auto& recipe : recipes)
+{
+    PluginImages::IconRow(imgui, hooks, recipe.name.c_str(), recipe.imageId, 2, [&]
+    {
+        imgui->Text(recipe.name.c_str());
+        imgui->Text(recipe.detail.c_str());
+    });
+}
+```
+
 If you draw without the helper, call `hooks->Images->GetSized(id, size, &w, &h)` with `size` the longer side in whole pixels. It is `Get` for a known size. When it fills in `w` and `h`, the texture is a copy of exactly that size: draw it at `w` by `h`, with no scaling. When `w` and `h` come back 0, it is the stored image: draw it scaled into your box. Like `Get`, the texture is valid for this frame only.
 
 **The four states.** `State(id)` returns one of these. `Get(id)` returns the texture only when the state is `PLUGIN_IMAGE_READY`, and it is valid for this frame only.

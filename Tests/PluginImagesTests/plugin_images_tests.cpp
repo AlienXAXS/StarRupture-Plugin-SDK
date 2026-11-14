@@ -268,6 +268,28 @@ int main()
 		Check(ri >= PluginImages::kMinSize && ri <= PluginImages::kMaxSize, "inf stays in range");
 	}
 
+	{
+		using PluginImages::SizeForLines;
+		using PluginImages::LinesHeight;
+		const float nan = std::numeric_limits<float>::quiet_NaN();
+		Check(SizeForLines(1, 40.0f, 6.0f) == 40.0f, "1 line is one line height");
+		Check(SizeForLines(2, 20.0f, 6.0f) == 46.0f, "2 lines add one spacing");
+		Check(SizeForLines(3, 20.0f, 4.0f) == 68.0f, "3 lines add two spacings");
+		Check(LinesHeight(2, 15.0f, 6.0f) == 36.0f && LinesHeight(1, 15.0f, 6.0f) == 15.0f, "default theme: 15 and 36 before the floor");
+		Check(SizeForLines(1, 15.0f, 6.0f) == PluginImages::kMinSize, "default theme, 1 line: the 28 floor");
+		Check(SizeForLines(2, 15.0f, 6.0f) == 36.0f, "default theme, 2 lines: 36");
+		Check(SizeForLines(0, 40.0f, 6.0f) == 40.0f && SizeForLines(-3, 40.0f, 6.0f) == 40.0f, "a count under 1 is 1");
+		Check(SizeForLines(2, 20.4f, 6.0f) == 47.0f, "rounds to a whole pixel");
+		Check(SizeForLines(1, 5.0f, 6.0f) == PluginImages::kMinSize, "a small size is raised to kMinSize");
+		Check(SizeForLines(4, 100.0f, 6.0f) == PluginImages::kMaxSize, "a large size is capped at kMaxSize");
+		Check(SizeForLines(2, nan, 6.0f) == PluginImages::kMinSize && SizeForLines(2, 15.0f, nan) == PluginImages::kMinSize, "NaN lands on kMinSize");
+		IModLoaderImGui theme{};
+		theme.GetTextLineHeight = []() { return 15.0f; };
+		theme.GetTextLineHeightWithSpacing = []() { return 21.0f; };
+		Check(SizeForLines(&theme, 1) == 28.0f && SizeForLines(&theme, 2) == 36.0f, "the wrapper reads the loader's theme");
+		Check(SizeForLines(static_cast<IModLoaderImGui*>(nullptr), 2) == 36.0f, "null imgui uses the default theme");
+	}
+
 	printf("%d checks, %d failed\n", g_checks, g_failed);
 	return g_failed ? 1 : 0;
 }
