@@ -31,8 +31,10 @@ Everything you need to build plugins for the [StarRupture ModLoader](https://git
 Plugins in their own repos find this SDK as a sibling folder, so no paths need setting:
 
 ```
-AnyFolder\n  StarRupture-Plugin-SDK\      (git clone --recursive)
-  StarRupture-Plugin-<Name>\n```
+AnyFolder\
+  StarRupture-Plugin-SDK\      (git clone --recursive)
+  StarRupture-Plugin-<Name>\
+```
 
 To use another location, pass `/p:PluginSDKInclude=<path to include>` and `/p:GameSDKRoot=<path to StarRupture SDK>` to MSBuild; they override the defaults. Details are in [PluginDevelopment.md](PluginDevelopment.md#where-the-sdks-live).
 
