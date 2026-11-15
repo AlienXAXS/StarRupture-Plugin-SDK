@@ -132,6 +132,22 @@ StarRupture-ModLoader/
 
 Use `ExamplePlugin` as your starting point. It is a minimal, working plugin that demonstrates the required structure without modifying gameplay.
 
+### Where the SDKs live
+
+A plugin repo finds the Plugin SDK next to it, so there is nothing to configure. Put both folders in the same parent:
+
+```
+AnyFolder\n  StarRupture-Plugin-SDK\      (git clone --recursive)
+  StarRupture-Plugin-<Name>\n```
+
+`--recursive` also fetches the Game-SDK headers (`StarRupture SDK`) that live inside the Plugin SDK. A plugin that has its own `StarRupture SDK` submodule uses that one instead. To point the build somewhere else, pass the paths on the command line; they win over the defaults:
+
+```
+msbuild /p:Configuration="Client Release" /p:Platform=x64 ^
+  /p:PluginSDKInclude=D:\sdk\StarRupture-Plugin-SDK\include ^
+  /p:GameSDKRoot="D:\sdk\StarRupture-Plugin-SDK\StarRupture SDK"
+```
+
 ### Quick Start
 
 1. **Copy** the `ExamplePlugin` folder and rename it (e.g. `MyPlugin`).

@@ -22,11 +22,19 @@ Everything you need to build plugins for the [StarRupture ModLoader](https://git
 ## Quick start
 
 1. **Download `dwmapi.dll`** from the [latest release](../../releases/latest) — pick Client or Server depending on your target
-2. **Clone this repo**
+2. **Clone this repo** with `git clone --recursive`, so the `StarRupture SDK` submodule comes with it
 3. **Copy `ExamplePlugin/` to a new folder**, rename it, and update the project name/GUID in the `.vcxproj`
 4. **Add your project to `StarRupture-Plugin-SDK.sln`** (or create your own `.sln`)
 5. **Build** using Visual Studio 2022 with the `Client Release` or `Server Release` configuration
 6. Drop your `.dll` into `Binaries\Win64\Plugins\` alongside `dwmapi.dll` and launch the game
+
+Plugins in their own repos find this SDK as a sibling folder, so no paths need setting:
+
+```
+AnyFolder\n  StarRupture-Plugin-SDK\      (git clone --recursive)
+  StarRupture-Plugin-<Name>\n```
+
+To use another location, pass `/p:PluginSDKInclude=<path to include>` and `/p:GameSDKRoot=<path to StarRupture SDK>` to MSBuild; they override the defaults. Details are in [PluginDevelopment.md](PluginDevelopment.md#where-the-sdks-live).
 
 See [PluginDevelopment.md](PluginDevelopment.md) for the complete API reference, hook list, config system, pattern scanner, and ImGui integration.
 
