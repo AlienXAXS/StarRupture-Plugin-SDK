@@ -3300,11 +3300,20 @@ live image (hooks included) and records nothing -- `Resolve` is what produces a 
 ## Contributing
 
 1. Fork the repository.
-2. Create a feature branch from `main`.
+2. Create a `feat/<name>` or `fix/<name>` branch from `main` (see [Branches](#branches)).
 3. Follow existing code style: tabs for indentation, existing naming conventions (`g_` for module statics, `s_` for function statics).
 4. Add logging to all significant code paths.
 5. Test with Debug and Release builds for both Client and Server configurations.
 6. Submit a pull request.
+
+### Branches
+
+- `main` is the released code.
+- `feat/<name>` and `fix/<name>` each hold one change.
+- `rc/<version>` (for example `rc/1.24`) is the release candidate for a version. It is what gets tested and then released.
+- There is no `develop` branch. Old `rc/*-next` branches (`rc/loader-next`, `rc/sdk-next`) are dead; don't use them.
+
+Start every change on its own `feat/` or `fix/` branch from `main`. It reaches `main` through the `rc/<version>` branch when that version is released.
 
 ---
 
