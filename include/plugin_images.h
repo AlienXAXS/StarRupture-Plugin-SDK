@@ -25,11 +25,11 @@
 //
 // Where the loader has no image table (a server or generic build, or a plugin
 // built against a header without hooks->Images), this reserves the space and
-// draws nothing. The call reads hooks->Images->GetSized, which only a loader
-// with interface 77 has, and a plugin cannot ask the loader which number it
-// has. Use this helper only in a plugin that declares 77, which is the default
-// (PLUGIN_INTERFACE_VERSION): a loader with a lower maximum then refuses the
-// plugin instead of running it on a shorter table.
+// draws nothing. The call reads hooks->Images->GetSized, which a loader with
+// interface 77 or later has, and a plugin cannot ask the loader which number it
+// has. Use this helper only in a plugin that declares 77 or later (78 is the
+// current default): a loader with a lower maximum then refuses the plugin
+// instead of running it on a shorter table.
 //
 // Size icons from the loader's font, so they grow with it. SizeForFont(imgui, 28.0f)
 // is 28 pixels at the default font and larger when the player raises the font
