@@ -736,6 +736,10 @@ if (scan->ResolveField(self, &req, &field))
     g_craftComponentOffset = field.offset;
 ```
 
+Start with no flag. A member asked for with no flag gets the running build's value from the
+loader's version object map, or from the game's reflection when the map has no row, so it keeps
+working when the game updates. Add a flag only when the list below says you must.
+
 - **Reflected** (no flag): the offset comes from the game's reflection data, found by class (short
   name, or `/Script/<Module>.<Name>` when two modules share it) and member, in the class or its
   supers. The member's size must equal `size`, unless the request sets `PLUGIN_FIELD_ANY_SIZE` (with
@@ -752,8 +756,11 @@ if (scan->ResolveField(self, &req, &field))
   member must also lie inside its class as the game reflects the class (offset plus size within the
   class's size), or the request fails. So on the client a native member's class must be one the game's
   reflection knows.
-- **`PLUGIN_FIELD_CHECK`**: the value must also equal what you were compiled with: `builtOffset`
-  (a bitfield: its `builtCL` row), or with `member` null the class size.
+- **`PLUGIN_FIELD_CHECK`**: only for code that keeps using the compiled value as it is, such as a
+  struct copied by value or a buffer you hand to the game. The value must also equal what you were
+  compiled with: `builtOffset` (a bitfield: its `builtCL` row), or with `member` null the class
+  size. When the game changes it, the request fails: the feature that lists it is off, or the
+  plugin is refused when no feature lists it. To read a member, leave the flag off.
 - **`PLUGIN_FIELD_BITFIELD`**: the member must be a bool; `boolMask` is filled in.
 
 `className` is the Dumper-7 name, prefix letter included (`ACrCrafter`, `FCrPackageTransportConnectionData`);
@@ -794,12 +801,62 @@ Two header-only layers in the SDK's `include/` fill the requests above for you:
   header's `kBuiltCL` is not your Game-SDK's `PLUGIN_GAME_BUILT_CL`, unless `PLUGIN_GAME_BUILT_CL` is 0
   (no build known), where the check passes.
 
+#### Worked example: read a member and run on a later game build
+
+This is the normal way to use a game value: ask the loader for it on the running build, and declare
+the plugin migrated so it may run on a build it was not compiled for.
+
+1. Set your build. Import `PluginGameBuild.props` from your `Shared.props`
+   ([Your game build](#your-game-build-plugin_game_built_cl)).
+2. Ask for the member with no flag, in `OnPluginLoadHooks`:
+
+   ```cpp
+   static auto g_craftComponent = SR_FIELD(SDK::UCrCraftingComponent*, ACrCrafter, CraftComponent, 0);
+
+   extern "C" __declspec(dllexport)
+   void OnPluginLoadHooks(IPluginSelf* self, IPluginHookScanner* scan)
+   {
+       PluginMap::ResolveFields(scan, self, g_craftComponent);
+   }
+   ```
+
+3. Declare the plugin migrated, and take the SDK globals first thing in `PluginInit`:
+
+   ```cpp
+   static PluginInfo s_pluginInfo = {
+       "MyPlugin", "1.0.0", "Your Name", "What this plugin does",
+       PLUGIN_INTERFACE_VERSION, PLUGIN_TARGET_CLIENT,
+       PLUGIN_GAME_BUILT_CL, PLUGIN_MAP_MIGRATED
+   };
+
+   bool PluginInit(IPluginSelf* self)
+   {
+       PluginSdkRuntime::Init(self->hooks);   // first, before any early return
+       ...
+   }
+   ```
+
+4. Read it through the accessor, never through the compiled member:
+
+   ```cpp
+   if (auto* component = g_craftComponent.In(crafter))   // null when not resolved
+       UseComponent(*component);
+   ```
+
+On a game build your plugin was not compiled for, the loader gives `g_craftComponent` the offset of
+that build, so nothing needs rebuilding. If the member is gone, the feature that lists it is off,
+or the plugin is refused when no feature lists it ([Features](#features----declarefeature)). Use
+`PLUGIN_FIELD_CHECK` only for a struct you copy by value; every other read takes no flag. A size
+you only step through takes `SR_SIZE` (see [Struct sizes](#struct-sizes-live-or-checked)).
+
 #### Your game build (PLUGIN_GAME_BUILT_CL)
 
 `PluginInfo::gameBuiltCL` says which game build your Game-SDK was generated from. The loader runs
-your plugin on that build as it always did, and on another build only if it is migrated
-(`PLUGIN_MAP_MIGRATED`, below), which needs the value set. `PluginGameBuild.props`, at the SDK's
-root, defines `PLUGIN_GAME_BUILT_CL` from the first of these that is there:
+your plugin on that build as it always did. On another build it runs it only if it is migrated
+(`PLUGIN_MAP_MIGRATED`), which needs the value set; a plugin that is not migrated is refused
+there, whatever it checks. Write a new plugin migrated from the start (see the
+[worked example](#worked-example-read-a-member-and-run-on-a-later-game-build)).
+`PluginGameBuild.props`, at the SDK's root, defines `PLUGIN_GAME_BUILT_CL` from the first of these that is there:
 
 1. A `PluginGameBuiltCL` property: `/p:PluginGameBuiltCL=127004` on the build (what a build script
    or CI passes for the build it checked your Game-SDK against), or a property your `Shared.props`
@@ -828,7 +885,6 @@ static uintptr_t g_beginPlay = 0;
 static uintptr_t g_fatalCall = 0;
 static SDK::UWorld** g_gworld = nullptr;
 static auto g_craftComponent = SR_FIELD(SDK::UCrCraftingComponent*, ACrCrafter, CraftComponent, 0);
-static auto g_crafterSize    = SR_SIZE_CHECK(ACrCrafter);
 
 extern "C" __declspec(dllexport)
 void OnPluginLoadHooks(IPluginSelf* self, IPluginHookScanner* scan)
@@ -841,8 +897,8 @@ void OnPluginLoadHooks(IPluginSelf* self, IPluginHookScanner* scan)
     // A site of your own, read as "MyPlugin/FatalReportCall": an E8 inside a function.
     g_fatalCall = PluginMap::Site(scan, self, "FatalReportCall", "E8 ?? ?? ?? ?? 48 8B 4C 24 ??",
         PLUGIN_SCAN_IN_FUNCTION);
-    // Members and class sizes for the running build.
-    PluginMap::ResolveFields(scan, self, g_craftComponent, g_crafterSize);
+    // Members for the running build.
+    PluginMap::ResolveFields(scan, self, g_craftComponent);
 }
 
 extern "C" __declspec(dllexport)
@@ -1230,7 +1286,8 @@ static PluginInfo s_pluginInfo = {
    `Global` or `Site`, or a `Resolve` request with `PLUGIN_SCAN_FLAG_MAP_KEY`.
 3. Every member of a game class you read or write through the compiled SDK is an `SR_FIELD`, an
    `SR_BITFIELD` or a `PluginLazyField`, or sits in a struct whose size an `SR_SIZE_CHECK` covers
-   (a struct you copy by value, a `TArray` element you step through). The engine's and Dumper-7's
+   (a struct you copy by value). A `TArray` of a struct that you only step through takes an
+   `SR_SIZE` row and `PluginMap::ElementAt` instead. The engine's and Dumper-7's
    own members (`UObject::Class`, `FName`, `TArray`'s data and count) stay compiled in.
 4. `PluginInit` calls `PluginSdkRuntime::Init(self->hooks)` as its first statement, before any
    early return, and the plugin calls `PluginSdkRuntime::GetWorld()`, never
@@ -1912,6 +1969,8 @@ The full surface, all prefixed `DL_`:
 
 Point arrays (`DL_AddPolyline`, `DL_AddConvexPolyFilled`) take a flat `const float*` of interleaved x,y pairs plus a point count, so no ImGui types cross the DLL boundary.
 
+**Bulk textured triangles (v78).** `DL_AddTexturedTriangles` submits indexed triangles using `PluginDrawVertex` (`pos_x`, `pos_y`, `uv_x`, `uv_y`, packed `0xAABBGGRR` color), `PluginDrawIndex` (fixed 16-bit), and `PluginDrawResult`. Indices are zero-based and local to the batch; split batches above 65,535 vertices. `index_count` must be nonzero and divisible by three. The draw list's vertex and index buffers together have a cumulative 16 MiB limit, including existing data and the incoming batch. The texture must be a live handle from `IPluginImages::Get` or `IPluginImGuiTextures`. The input arrays are consumed synchronously and are not retained. Call only from a render callback, never `Tick`; declare interface 78 to use this function.
+
 ---
 
 #### hooks->HUD
@@ -2306,7 +2365,7 @@ g_icons.Shutdown();
 
 The image library is the loader's one place for game images. It reads an image the first time it is drawn, keeps a small copy for the session and gives copies up only when its memory cap is reached. It replaces the item icon helper above for new plugins: use `include/plugin_images.h` and `hooks->Images` instead of `item_icons.h`. The library is client only. Include `plugin_images.h` after `plugin_interface.h`.
 
-**Loader requirement.** `hooks->Images` exists only in a loader release that has the image library (interface v77, loader 1.24.0 or newer); it is null on a server or generic build. A plugin built against a header that has the table needs such a loader, and an older loader refuses it. A plugin built against a header without the table still compiles the same `PluginImages::Image` call: it reserves the space and draws nothing. `PluginImages::Image` calls `GetSized`, the last entry of the table, and a plugin cannot ask the loader which interface number it has, so the helper cannot tell a shorter table from the full one. Use it only in a plugin that declares 77, which is the default (`PLUGIN_INTERFACE_VERSION`): a loader whose maximum is lower then refuses the plugin instead of running it. A plugin that declares a lower number must not call the helper. Check `hooks->Images` before you call the table yourself.
+**Loader requirement.** `hooks->Images` exists only in a loader release that has the image library (interface v77, loader 1.24.0 or newer); it is null on a server or generic build. A plugin built against a header that has the table needs such a loader, and an older loader refuses it. A plugin built against a header without the table still compiles the same `PluginImages::Image` call: it reserves the space and draws nothing. `PluginImages::Image` calls `GetSized`, the last entry of the table, and a plugin cannot ask the loader which interface number it has, so the helper cannot tell a shorter table from the full one. Declare 77 when using the image library without v78 features; current headers default to 78. A plugin may deliberately declare 75 only when it uses neither v77 image-library nor v78 triangle functionality and needs compatibility with loaders that support at most v75. Older loaders reject plugins declaring a version above their maximum. Check `hooks->Images` before you call the table yourself.
 
 1. Get an id once and keep it. The same name or path always gives the same id.
 2. In the render callback, call `PluginImages::Image` with that id and a size.
@@ -3232,11 +3291,12 @@ The loader accepts plugins whose `interfaceVersion` is in `[PLUGIN_INTERFACE_VER
 | v73     | no          | **Features, and load/unload settings.** Added `IPluginHookScanner::DeclareFeature` and `PluginFeatureDesc`: a miss on a feature's key turns that feature off instead of refusing the plugin. A plugin states when it may be loaded and unloaded while the game runs (`PluginLoadSetting` / `PluginUnloadSetting` in `PluginInfo::mapFlags`) and can mark itself busy with `IPluginEngineEvents::SetBusyReason`. MIN remains 70. |
 | v74     | no          | **Size the next ImGui window, the game's UI state, and a reflected size.** Added `IModLoaderImGui::SetNextWindowSize` / `SetNextWindowSizeConstraints` and the `PluginWindowFlags_AlwaysAutoResize` / `PluginCond_*` constants (appended at the bottom of `IModLoaderImGui`), `PluginUIState` with `IPluginGameMenu::GetUIState` / `RegisterOnUIStateChanged` / `UnregisterOnUIStateChanged`, and `PLUGIN_FIELD_ANY_SIZE`, a flag on a reflected `PluginFieldRequest` that takes whatever size the game reflects. MIN remains 70. |
 | v75     | no          | **Panel title-bar buttons and collapse, and mouse over the game's menus.** `PluginPanelDesc` gained `titleBarFn` (appended at the end), an optional callback run inside the title bar the loader draws for the panel. `IPluginUIEvents` gained `IsPanelCollapsed` and `SetPanelCollapsed` (appended at the bottom). Added `PluginWindowFlags_MenuMouseWhereUncovered`, a loader-only widget flag that takes the mouse only where no widget of the game's menu is under the cursor. See [hooks->UI](#hooks-ui). The loader reads `titleBarFn` only from a plugin that declares 75 or later; a v74 loader refuses a v75 plugin. MIN remains 70. |
-| v77     | no          | **Image library (loader 1.24.0 or newer).** `IPluginHooks` gained `Images` (`IPluginImages`, client only, null on server/generic), appended at the end: `Item`, `Path`, `FromTexture`, `Get`, `State`, `UseSets`, `Canonical` and `GetSized`, which returns a copy of an image made for the exact pixel size you draw it at. `include/plugin_images.h` draws images through it. See [Drawing library images](#drawing-library-images-plugin_imagesh). A loader older than v77 refuses a v77 plugin. MIN remains 70. |
+| v77     | no          | **Image library (loader 1.24.0 or newer).** `IPluginHooks` gained `Images` (`IPluginImages`, client only, null on server/generic), appended at the end: `Item`, `Path`, `FromTexture`, `Get`, `State`, `UseSets`, `Canonical` and `GetSized`, which returns a copy of an image made for the exact pixel size you draw it at. `include/plugin_images.h` draws images through it. See [Drawing library images](#drawing-library-images-plugin_imagesh). Plugins using these features must declare 77 or later; a loader older than the declared interface rejects the plugin. MIN remains 70. |
+| v78     | no          | **Bulk textured triangles (ModLoader 1.25.0 or newer).** Appended `DL_AddTexturedTriangles` and its `PluginDrawVertex`, `PluginDrawIndex` and `PluginDrawResult` types to `IModLoaderImGui` without changing the existing table prefix. See the direct draw list section above for its batch, texture, buffer and callback requirements. Plugins declaring 78 are rejected by older loaders, including 1.24.0. Plugins not using v78 features may deliberately declare 77 (including for image-library use) or 75 (when they use neither v77 nor v78 features). MIN remains 70. |
 
-The current `PLUGIN_INTERFACE_VERSION_MIN` is **70** and `PLUGIN_INTERFACE_VERSION_MAX` is **77** (see `plugin_interface.h` for the authoritative value and full per-version changelog comments).
+The current `PLUGIN_INTERFACE_VERSION_MIN` is **70** and `PLUGIN_INTERFACE_VERSION_MAX` is **78** (see `plugin_interface.h` for the authoritative value and full per-version changelog comments).
 
-A plugin built against these headers declares **77** by default (`PLUGIN_INTERFACE_VERSION`). Loader 1.23.x accepts 70 through 75, so a plugin that uses nothing from v76 or v77 may still declare 75; loader 1.24.0 or newer is needed for 77. A loader before 1.23.0 refuses a plugin newer than its maximum and shows it as needing a newer mod loader.
+A plugin built against these headers declares **78** by default (`PLUGIN_INTERFACE_VERSION`). ModLoader 1.25.0 or newer is required for v78; older loaders reject a plugin declaring 78. A plugin using the v77 image library may declare 77, which requires loader 1.24.0 or newer. A plugin using neither v77 nor v78 functionality may deliberately declare 75 for compatibility with loaders supporting versions 70 through 75. MIN remains 70.
 
 ---
 
@@ -3300,11 +3360,20 @@ live image (hooks included) and records nothing -- `Resolve` is what produces a 
 ## Contributing
 
 1. Fork the repository.
-2. Create a feature branch from `main`.
+2. Create a `feat/<name>` or `fix/<name>` branch from `main` (see [Branches](#branches)).
 3. Follow existing code style: tabs for indentation, existing naming conventions (`g_` for module statics, `s_` for function statics).
 4. Add logging to all significant code paths.
 5. Test with Debug and Release builds for both Client and Server configurations.
 6. Submit a pull request.
+
+### Branches
+
+- `main` is the released code.
+- `feat/<name>` and `fix/<name>` each hold one change.
+- `rc/<version>` (for example `rc/1.24`) is the release candidate for a version. It is what gets tested and then released.
+- There is no `develop` branch. Old `rc/*-next` branches (`rc/loader-next`, `rc/sdk-next`) are dead; don't use them.
+
+Start every change on its own `feat/` or `fix/` branch from `main`. It reaches `main` through the `rc/<version>` branch when that version is released.
 
 ---
 

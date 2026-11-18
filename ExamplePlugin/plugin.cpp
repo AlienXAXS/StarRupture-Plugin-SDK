@@ -14,6 +14,9 @@ IPluginSelf* GetSelf() { return g_self; }
 #define MODLOADER_BUILD_TAG "dev"
 #endif
 
+// This plugin runs only on the game build it was built for. To keep running after a game
+// update, see "Worked example: read a member and run on a later game build" in
+// PluginDevelopment.md.
 static PluginInfo s_pluginInfo = {
 	"ExamplePlugin",
 	MODLOADER_BUILD_TAG,
