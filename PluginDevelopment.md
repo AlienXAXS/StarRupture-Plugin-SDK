@@ -736,6 +736,10 @@ if (scan->ResolveField(self, &req, &field))
     g_craftComponentOffset = field.offset;
 ```
 
+Start with no flag. A member asked for with no flag gets the running build's value from the
+loader's version object map, or from the game's reflection when the map has no row, so it keeps
+working when the game updates. Add a flag only when the list below says you must.
+
 - **Reflected** (no flag): the offset comes from the game's reflection data, found by class (short
   name, or `/Script/<Module>.<Name>` when two modules share it) and member, in the class or its
   supers. The member's size must equal `size`, unless the request sets `PLUGIN_FIELD_ANY_SIZE` (with
@@ -752,8 +756,11 @@ if (scan->ResolveField(self, &req, &field))
   member must also lie inside its class as the game reflects the class (offset plus size within the
   class's size), or the request fails. So on the client a native member's class must be one the game's
   reflection knows.
-- **`PLUGIN_FIELD_CHECK`**: the value must also equal what you were compiled with: `builtOffset`
-  (a bitfield: its `builtCL` row), or with `member` null the class size.
+- **`PLUGIN_FIELD_CHECK`**: only for code that keeps using the compiled value as it is, such as a
+  struct copied by value or a buffer you hand to the game. The value must also equal what you were
+  compiled with: `builtOffset` (a bitfield: its `builtCL` row), or with `member` null the class
+  size. When the game changes it, the request fails: the feature that lists it is off, or the
+  plugin is refused when no feature lists it. To read a member, leave the flag off.
 - **`PLUGIN_FIELD_BITFIELD`**: the member must be a bool; `boolMask` is filled in.
 
 `className` is the Dumper-7 name, prefix letter included (`ACrCrafter`, `FCrPackageTransportConnectionData`);
@@ -794,12 +801,62 @@ Two header-only layers in the SDK's `include/` fill the requests above for you:
   header's `kBuiltCL` is not your Game-SDK's `PLUGIN_GAME_BUILT_CL`, unless `PLUGIN_GAME_BUILT_CL` is 0
   (no build known), where the check passes.
 
+#### Worked example: read a member and run on a later game build
+
+This is the normal way to use a game value: ask the loader for it on the running build, and declare
+the plugin migrated so it may run on a build it was not compiled for.
+
+1. Set your build. Import `PluginGameBuild.props` from your `Shared.props`
+   ([Your game build](#your-game-build-plugin_game_built_cl)).
+2. Ask for the member with no flag, in `OnPluginLoadHooks`:
+
+   ```cpp
+   static auto g_craftComponent = SR_FIELD(SDK::UCrCraftingComponent*, ACrCrafter, CraftComponent, 0);
+
+   extern "C" __declspec(dllexport)
+   void OnPluginLoadHooks(IPluginSelf* self, IPluginHookScanner* scan)
+   {
+       PluginMap::ResolveFields(scan, self, g_craftComponent);
+   }
+   ```
+
+3. Declare the plugin migrated, and take the SDK globals first thing in `PluginInit`:
+
+   ```cpp
+   static PluginInfo s_pluginInfo = {
+       "MyPlugin", "1.0.0", "Your Name", "What this plugin does",
+       PLUGIN_INTERFACE_VERSION, PLUGIN_TARGET_CLIENT,
+       PLUGIN_GAME_BUILT_CL, PLUGIN_MAP_MIGRATED
+   };
+
+   bool PluginInit(IPluginSelf* self)
+   {
+       PluginSdkRuntime::Init(self->hooks);   // first, before any early return
+       ...
+   }
+   ```
+
+4. Read it through the accessor, never through the compiled member:
+
+   ```cpp
+   if (auto* component = g_craftComponent.In(crafter))   // null when not resolved
+       UseComponent(*component);
+   ```
+
+On a game build your plugin was not compiled for, the loader gives `g_craftComponent` the offset of
+that build, so nothing needs rebuilding. If the member is gone, the feature that lists it is off,
+or the plugin is refused when no feature lists it ([Features](#features----declarefeature)). Use
+`PLUGIN_FIELD_CHECK` only for a struct you copy by value; every other read takes no flag. A size
+you only step through takes `SR_SIZE` (see [Struct sizes](#struct-sizes-live-or-checked)).
+
 #### Your game build (PLUGIN_GAME_BUILT_CL)
 
 `PluginInfo::gameBuiltCL` says which game build your Game-SDK was generated from. The loader runs
-your plugin on that build as it always did, and on another build only if it is migrated
-(`PLUGIN_MAP_MIGRATED`, below), which needs the value set. `PluginGameBuild.props`, at the SDK's
-root, defines `PLUGIN_GAME_BUILT_CL` from the first of these that is there:
+your plugin on that build as it always did. On another build it runs it only if it is migrated
+(`PLUGIN_MAP_MIGRATED`), which needs the value set; a plugin that is not migrated is refused
+there, whatever it checks. Write a new plugin migrated from the start (see the
+[worked example](#worked-example-read-a-member-and-run-on-a-later-game-build)).
+`PluginGameBuild.props`, at the SDK's root, defines `PLUGIN_GAME_BUILT_CL` from the first of these that is there:
 
 1. A `PluginGameBuiltCL` property: `/p:PluginGameBuiltCL=127004` on the build (what a build script
    or CI passes for the build it checked your Game-SDK against), or a property your `Shared.props`
@@ -828,7 +885,6 @@ static uintptr_t g_beginPlay = 0;
 static uintptr_t g_fatalCall = 0;
 static SDK::UWorld** g_gworld = nullptr;
 static auto g_craftComponent = SR_FIELD(SDK::UCrCraftingComponent*, ACrCrafter, CraftComponent, 0);
-static auto g_crafterSize    = SR_SIZE_CHECK(ACrCrafter);
 
 extern "C" __declspec(dllexport)
 void OnPluginLoadHooks(IPluginSelf* self, IPluginHookScanner* scan)
@@ -841,8 +897,8 @@ void OnPluginLoadHooks(IPluginSelf* self, IPluginHookScanner* scan)
     // A site of your own, read as "MyPlugin/FatalReportCall": an E8 inside a function.
     g_fatalCall = PluginMap::Site(scan, self, "FatalReportCall", "E8 ?? ?? ?? ?? 48 8B 4C 24 ??",
         PLUGIN_SCAN_IN_FUNCTION);
-    // Members and class sizes for the running build.
-    PluginMap::ResolveFields(scan, self, g_craftComponent, g_crafterSize);
+    // Members for the running build.
+    PluginMap::ResolveFields(scan, self, g_craftComponent);
 }
 
 extern "C" __declspec(dllexport)
@@ -1230,7 +1286,8 @@ static PluginInfo s_pluginInfo = {
    `Global` or `Site`, or a `Resolve` request with `PLUGIN_SCAN_FLAG_MAP_KEY`.
 3. Every member of a game class you read or write through the compiled SDK is an `SR_FIELD`, an
    `SR_BITFIELD` or a `PluginLazyField`, or sits in a struct whose size an `SR_SIZE_CHECK` covers
-   (a struct you copy by value, a `TArray` element you step through). The engine's and Dumper-7's
+   (a struct you copy by value). A `TArray` of a struct that you only step through takes an
+   `SR_SIZE` row and `PluginMap::ElementAt` instead. The engine's and Dumper-7's
    own members (`UObject::Class`, `FName`, `TArray`'s data and count) stay compiled in.
 4. `PluginInit` calls `PluginSdkRuntime::Init(self->hooks)` as its first statement, before any
    early return, and the plugin calls `PluginSdkRuntime::GetWorld()`, never
@@ -3303,11 +3360,20 @@ live image (hooks included) and records nothing -- `Resolve` is what produces a 
 ## Contributing
 
 1. Fork the repository.
-2. Create a feature branch from `main`.
+2. Create a `feat/<name>` or `fix/<name>` branch from `main` (see [Branches](#branches)).
 3. Follow existing code style: tabs for indentation, existing naming conventions (`g_` for module statics, `s_` for function statics).
 4. Add logging to all significant code paths.
 5. Test with Debug and Release builds for both Client and Server configurations.
 6. Submit a pull request.
+
+### Branches
+
+- `main` is the released code.
+- `feat/<name>` and `fix/<name>` each hold one change.
+- `rc/<version>` (for example `rc/1.24`) is the release candidate for a version. It is what gets tested and then released.
+- There is no `develop` branch. Old `rc/*-next` branches (`rc/loader-next`, `rc/sdk-next`) are dead; don't use them.
+
+Start every change on its own `feat/` or `fix/` branch from `main`. It reaches `main` through the `rc/<version>` branch when that version is released.
 
 ---
 
