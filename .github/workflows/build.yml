@@ -43,7 +43,7 @@ jobs:
           built=false
           if [ "${{ github.event_name }}" != "workflow_dispatch" ]; then
             found=$(gh api "repos/${{ github.repository }}/actions/artifacts?name=example-plugin-built-$tree" \
-              --jq '[.artifacts[] | select(.expired | not)] | length')
+              --jq '[.artifacts[] | select(.expired | not)] | length' || echo 0)
             if [ "$found" -gt 0 ]; then built=true; fi
           fi
           echo "built=$built" >> "$GITHUB_OUTPUT"
