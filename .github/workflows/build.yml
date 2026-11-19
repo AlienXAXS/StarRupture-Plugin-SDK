@@ -1,5 +1,11 @@
 name: Verify ExamplePlugin builds
 
+# The build runs once per tree, not once per commit: a pull request and the
+# merge that follows it, or two commits with the same files, have the same
+# tree and share one result. A successful build leaves a small artifact named
+# after the tree id; a later run for the same tree finds it and skips the
+# build. A manual run always builds.
+
 on:
   workflow_dispatch: 
   push:
@@ -12,8 +18,40 @@ on:
     paths-ignore:
       - '**/*.md'
 
+permissions:
+  contents: read
+  actions: read  # lets the check below list this repository's artifacts
+
 jobs:
+  check:
+    runs-on: ubuntu-latest
+    outputs:
+      tree: ${{ steps.tree.outputs.tree }}
+      built: ${{ steps.tree.outputs.built }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Look for a build of this tree
+        id: tree
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tree=$(git rev-parse 'HEAD^{tree}')
+          echo "tree=$tree" >> "$GITHUB_OUTPUT"
+          built=false
+          if [ "${{ github.event_name }}" != "workflow_dispatch" ]; then
+            found=$(gh api "repos/${{ github.repository }}/actions/artifacts?name=example-plugin-built-$tree" \
+              --jq '[.artifacts[] | select(.expired | not)] | length')
+            if [ "$found" -gt 0 ]; then built=true; fi
+          fi
+          echo "built=$built" >> "$GITHUB_OUTPUT"
+          echo "Tree $tree, already built: $built"
+
   build:
+    needs: check
+    if: needs.check.outputs.built != 'true'
     runs-on: windows-latest
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
@@ -42,3 +80,14 @@ jobs:
             /p:Platform=x64 `
             /m `
             /v:minimal
+
+      - name: Record the build of this tree
+        shell: bash
+        run: echo "${{ needs.check.outputs.tree }}" > built-tree.txt
+
+      - name: Keep the record
+        uses: actions/upload-artifact@v7
+        with:
+          name: example-plugin-built-${{ needs.check.outputs.tree }}
+          path: built-tree.txt
+          retention-days: 30
