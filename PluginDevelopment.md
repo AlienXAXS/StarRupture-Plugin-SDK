@@ -887,8 +887,9 @@ make it multi-version: set `PLUGIN_MAP_MIGRATED` and read its per-build game val
 loader's version object map (see the
 [worked example](#worked-example-read-a-member-and-run-on-a-later-game-build)). A plugin that
 must stay on CL-127004 builds against the CL-127004 Client SDK, which is the Game-SDK commit
-`659656c`. Passing `/p:PluginGameBuiltCL=127004` alone only changes the number the plugin
-declares, not the headers it was built from, so do not use it for that.
+`659656c`, which has no `build_cl.txt`, so pass `/p:PluginGameBuiltCL=127004` with it. That
+property alone only changes the number the plugin declares, not the headers it was built from,
+so do not use it on the CL-130045 SDK.
 
 The release workflow follows the same rule: it builds with the Game-SDK that the Plugin SDK ref
 (`sdk_ref`) pins, so a Client release made from this SDK is built at CL-130045. To keep the
