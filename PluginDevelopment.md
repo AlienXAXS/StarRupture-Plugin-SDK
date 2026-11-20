@@ -856,44 +856,62 @@ your plugin on that build as it always did. On another build it runs it only if 
 (`PLUGIN_MAP_MIGRATED`), which needs the value set; a plugin that is not migrated is refused
 there, whatever it checks. Write a new plugin migrated from the start (see the
 [worked example](#worked-example-read-a-member-and-run-on-a-later-game-build)).
-`PluginGameBuild.props`, at the SDK's root, defines `PLUGIN_GAME_BUILT_CL` from the first of these that is there:
 
-1. A `PluginGameBuiltCL` property: `/p:PluginGameBuiltCL=127004` on the build (what a build script
-   or CI passes for the build it checked your Game-SDK against), or a property your `Shared.props`
-   sets before the import, to pin it.
-2. The `build_cl.txt` beside the Game-SDK's `Client\` or `Server\` folder, if it has one.
-3. Nothing: no define, and your plugin declares build 0.
+The number always comes from the Game-SDK headers you compile against, so it cannot disagree with
+them. `PluginGameBuild.props`, at the SDK's root, reads `build_cl.txt` in the Game-SDK folder on
+your include path (`Client\` or `Server\`, the one your configuration uses) and defines
+`PLUGIN_GAME_BUILT_CL` as that number. When the headers move to a newer game build, your next build
+declares the newer number: you change nothing.
 
-Import it once from your `Shared.props`, after `GameSDKRoot` and `PluginSDKInclude` are set, in place
-of a copy of the block:
+Import it once from your `Shared.props`, after `GameSDKRoot`, `StarRuptureSDKConfigDir` and
+`PluginSDKInclude` are set:
 
 ```xml
-<PropertyGroup>
-  <PluginGameBuiltCL Condition="'$(PluginGameBuiltCL)' == ''">127004</PluginGameBuiltCL>
-</PropertyGroup>
 <Import Project="$(PluginSDKInclude)\..\PluginGameBuild.props"
         Condition="Exists('$(PluginSDKInclude)\..\PluginGameBuild.props')" />
 ```
 
-The `PropertyGroup` is the pin, and is optional. The SDK's own `Shared.props` imports the file the
-same way.
+The SDK's own `Shared.props` imports it the same way. A plugin that does not import it declares
+build 0, which the loader reads as CL-127004, so import it in every plugin.
+
+**A `PluginGameBuiltCL` pin never fails a build.** An older `Shared.props` may set
+`PluginGameBuiltCL`, and a build may pass `/p:PluginGameBuiltCL=<CL>`. It is only a fallback:
+
+| The Game-SDK folder has | The plugin declares | The build prints |
+|---|---|---|
+| `build_cl.txt`, and there is no pin or the pin is the same | the file's number | nothing |
+| `build_cl.txt`, and the pin is different | the file's number | warning `PLUGINCL004`, naming both numbers |
+| no usable `build_cl.txt` (missing, empty, not a number), and a pin | the pin | warning `PLUGINCL001` (it could not be checked) |
+| no usable `build_cl.txt` and no pin | 0 (no define), as before | nothing |
+
+To stop a `PLUGINCL004` warning, delete the `PluginGameBuiltCL` line from your `Shared.props`; the
+plugin declares the same number either way.
 
 **Which build the SDK's Game-SDK gives you.** The `StarRupture SDK` submodule holds one Client
 SDK and one Server SDK, each with a `build_cl.txt`. The Client SDK is CL-130045 and the Server
-SDK is CL-127004, so a plugin built from this SDK gets `PLUGIN_GAME_BUILT_CL` 130045 on a `Client`
-configuration and 127004 on a `Server` one. A plugin that is not migrated is refused on any other
-game build, so a Client plugin built this way is refused on a CL-127004 client. To run on both,
-make it multi-version: set `PLUGIN_MAP_MIGRATED` and read its per-build game values from the
-loader's version object map (see the
-[worked example](#worked-example-read-a-member-and-run-on-a-later-game-build)). A plugin that
-must stay on CL-127004 builds against the CL-127004 Client SDK, which is the Game-SDK commit
-`659656c`, which has no `build_cl.txt`, so pass `/p:PluginGameBuiltCL=127004` with it. That
-property alone only changes the number the plugin declares, not the headers it was built from,
-so do not use it on the CL-130045 SDK.
+SDK is CL-127004, so a plugin built from this SDK declares 130045 on a `Client` configuration and
+127004 on a `Server` one. A plugin that is not migrated is refused on any other game build, so a
+Client plugin built this way is refused on a CL-127004 client. To run on both, make it
+multi-version: set `PLUGIN_MAP_MIGRATED` and read its per-build game values from the loader's
+version object map (see the
+[worked example](#worked-example-read-a-member-and-run-on-a-later-game-build)).
 
-The release workflow follows the same rule: it builds with the Game-SDK that the Plugin SDK ref
-(`sdk_ref`) pins, so a Client release made from this SDK is built at CL-130045. To keep the
-older Game-SDK for a release, set `sdk_ref` to an older Plugin SDK tag.
+**A plugin that must stay on CL-127004.** Build it against the CL-127004 Game-SDK, the commit
+`659656c` of the Game-SDK repository (its `main`):
+
+1. Check out the Game-SDK at `659656c` and point `GameSDKRoot` at it:
+   `/p:GameSDKRoot=<path to that checkout>`.
+2. Set `PluginGameBuiltCL` to 127004 in your `Shared.props`, or build with
+   `/p:PluginGameBuiltCL=127004`. That commit has no `build_cl.txt`, so the pin is what the plugin
+   declares (with warning `PLUGINCL001`, because it could not be checked). Without a pin the
+   plugin declares 0, which the loader also reads as 127004.
+
+Passing `/p:PluginGameBuiltCL=127004` against the CL-130045 headers does not make a 127004
+plugin: the headers win and the plugin declares 130045. Only 127004 headers do.
+
+The release workflow takes the Game-SDK from the Plugin SDK it checks out (the submodule the
+checkout pins), so a Client release made from this SDK is built, and declared, at CL-130045. To
+release a plugin on the older Game-SDK, set `sdk_ref` to an older Plugin SDK tag.
 
 ```cpp
 #include "plugin_map.h"
@@ -1296,9 +1314,8 @@ static PluginInfo s_pluginInfo = {
 
 **Migration checklist.** Set `PLUGIN_MAP_MIGRATED` only when all of these hold:
 
-1. `PLUGIN_GAME_BUILT_CL` is not 0: your `Shared.props` imports `PluginGameBuild.props` and pins
-   `PluginGameBuiltCL`, or your build passes it, or your Game-SDK has `build_cl.txt`
-   ([Your game build](#your-game-build-plugin_game_built_cl)).
+1. `PLUGIN_GAME_BUILT_CL` is not 0: your `Shared.props` imports `PluginGameBuild.props`, which reads it
+   from your Game-SDK headers ([Your game build](#your-game-build-plugin_game_built_cl)).
 2. Every game function you reach through an address comes from `PluginMap::Function`, `FunctionAs`,
    `Global` or `Site`, or a `Resolve` request with `PLUGIN_SCAN_FLAG_MAP_KEY`.
 3. Every member of a game class you read or write through the compiled SDK is an `SR_FIELD`, an

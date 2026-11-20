@@ -13,7 +13,7 @@ Everything you need to build plugins for the [StarRupture ModLoader](https://git
 | `include/object_ref.h` | `ObjectRef<T>`: a UObject reference that is safe to keep past the tick it was read on |
 | `include/item_icons.h` | `ItemIcons::Loader`: loads item icons the first time they are drawn, a few per tick (`icon_requests.h` is its request queue) |
 | `include/plugin_images.h` | `PluginImages::Image`: draws an image from the loader's image library, or reserves its space while it loads (interface 77, loader 1.24.0 or newer) |
-| `PluginGameBuild.props` | Defines `PLUGIN_GAME_BUILT_CL`, the game build a plugin was built for; import it from a plugin's `Shared.props` |
+| `PluginGameBuild.props` | Defines `PLUGIN_GAME_BUILT_CL` from the build_cl.txt of the Game-SDK headers a plugin compiles against (a stale pin only warns); import it from a plugin's `Shared.props` |
 | `ExamplePlugin/` | Minimal starter plugin — copy, rename, and go |
 | `StarRupture SDK/` | Dumper-7 generated UE5 SDK headers (Client + Server + Generic) |
 | `Shared.props` | MSBuild properties for SDK paths and build configs |
