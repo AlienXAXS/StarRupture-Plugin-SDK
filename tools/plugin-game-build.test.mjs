@@ -166,14 +166,43 @@ test('no build_cl.txt and no pin: no define and no warning, as before', opts, ()
   assert.deepEqual(r.warnings, []);
 });
 
-test('a Game-SDK folder that does not exist behaves like a missing marker', opts, () => {
+test('a Game-SDK folder that does not exist: the pin is used, silently', opts, () => {
   const pinned = build({ GameSDKRoot: join(work, 'does-not-exist'), PluginGameBuiltCL: '127004' });
   assert.ok(pinned.ok, pinned.out);
   assert.equal(pinned.define, def(127004));
-  assert.deepEqual(pinned.warnings, ['PLUGINCL001']);
+  assert.deepEqual(pinned.warnings, []);
   const bare = build({ GameSDKRoot: join(work, 'does-not-exist') });
   assert.ok(bare.ok, bare.out);
   assert.equal(bare.define, '');
+  assert.deepEqual(bare.warnings, []);
+});
+
+test('no Game-SDK folder anywhere (a plugin with no Game-SDK headers): the pin or nothing, silent', opts, () => {
+  // No GameSDKRoot, no include dir, and no "StarRupture SDK" folder under SolutionDir.
+  const solDir = dirOf('nosdk');
+  mkdirSync(solDir, { recursive: true });
+  const pinned = build({ SolutionDir: `${solDir}\\`, PluginGameBuiltCL: '130045' });
+  assert.ok(pinned.ok, pinned.out);
+  assert.equal(pinned.define, def(130045));
+  assert.deepEqual(pinned.warnings, []);
+  const bare = build({ SolutionDir: `${solDir}\\` });
+  assert.ok(bare.ok, bare.out);
+  assert.equal(bare.define, '');
+  assert.deepEqual(bare.warnings, []);
+});
+
+test('the "StarRupture SDK" folder under SolutionDir is used when it exists', opts, () => {
+  const solDir = dirOf('solsdk');
+  mkdirSync(join(solDir, 'StarRupture SDK', 'Client'), { recursive: true });
+  const none = build({ SolutionDir: `${solDir}\\`, PluginGameBuiltCL: '127004' });
+  assert.ok(none.ok, none.out);
+  assert.equal(none.define, def(127004));
+  assert.deepEqual(none.warnings, ['PLUGINCL001'], 'the SDK folder exists but has no marker');
+  writeFileSync(join(solDir, 'StarRupture SDK', 'Client', 'build_cl.txt'), '130045');
+  const marked = build({ SolutionDir: `${solDir}\\`, PluginGameBuiltCL: '127004' });
+  assert.ok(marked.ok, marked.out);
+  assert.equal(marked.define, def(130045));
+  assert.deepEqual(marked.warnings, ['PLUGINCL004']);
 });
 
 test('a marker that is empty or not a number counts as missing', opts, () => {

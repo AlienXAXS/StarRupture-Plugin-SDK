@@ -20,9 +20,12 @@
        this file). That value never fails a build:
          - build_cl.txt there and different: the headers win and the build
            prints warning PLUGINCL004 naming both numbers;
-         - build_cl.txt missing or not a number: the pin is used, with
-           warning PLUGINCL001 (the declaration could not be checked);
-         - neither: no define, as before (the plugin declares 0, which the
+         - build_cl.txt missing or not a number in a Game-SDK folder that
+           exists: the pin is used, with warning PLUGINCL001 (the
+           declaration could not be checked);
+         - no Game-SDK folder at all (a plugin that compiles no Game-SDK
+           headers), or no pin and no marker: the pin if any, else no
+           define, silently, as before (the plugin declares 0, which the
            loader reads as CL-127004).
 
        Import it from the plugin's Shared.props, after GameSDKRoot,
@@ -35,7 +38,9 @@
     <StarRuptureCLSide Condition="'$(StarRuptureCLSide)' == ''">Server</StarRuptureCLSide>
     <StarRuptureCLDir Condition="'$(StarRuptureSDKConfigDir)' != ''">$(StarRuptureSDKConfigDir.Split(';')[0])</StarRuptureCLDir>
     <StarRuptureCLDir Condition="'$(StarRuptureCLDir)' == '' And '$(GameSDKRoot)' != ''">$(GameSDKRoot)\$(StarRuptureCLSide)</StarRuptureCLDir>
-    <StarRuptureCLDir Condition="'$(StarRuptureCLDir)' == ''">$(SolutionDir)StarRupture SDK\$(StarRuptureCLSide)</StarRuptureCLDir>
+    <StarRuptureCLDir Condition="'$(StarRuptureCLDir)' == '' And Exists('$(SolutionDir)StarRupture SDK')">$(SolutionDir)StarRupture SDK\$(StarRuptureCLSide)</StarRuptureCLDir>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(StarRuptureCLDir)' != ''">
     <StarRuptureCLDir>$([MSBuild]::EnsureTrailingSlash($([MSBuild]::NormalizePath('$(MSBuildProjectDirectory)', '$(StarRuptureCLDir)'))))</StarRuptureCLDir>
     <StarRuptureCLFile>$(StarRuptureCLDir)build_cl.txt</StarRuptureCLFile>
   </PropertyGroup>
@@ -63,7 +68,7 @@
       <StarRuptureCLNowDir>$([MSBuild]::EnsureTrailingSlash($([MSBuild]::NormalizePath('$(MSBuildProjectDirectory)', '$(StarRuptureCLNowDir)'))))</StarRuptureCLNowDir>
     </PropertyGroup>
     <Warning Code="PLUGINCL001"
-             Condition="'$(StarRuptureCLMarker)' == '' And '$(StarRuptureCLPinned)' != ''"
+             Condition="'$(StarRuptureCLMarker)' == '' And '$(StarRuptureCLPinned)' != '' And '$(StarRuptureCLDir)' != '' And Exists('$(StarRuptureCLDir)')"
              Text="PLUGIN_GAME_BUILT_CL: $(StarRuptureCLFile) is missing, empty or not a number, so the game build of the Game-SDK headers cannot be checked. This build declares $(StarRuptureCLPinned), from PluginGameBuiltCL. Use a Game-SDK that has build_cl.txt to take the number from the headers." />
     <Warning Code="PLUGINCL004"
              Condition="'$(StarRuptureCLMarker)' != '' And '$(StarRuptureCLPinned)' != '' And '$(StarRuptureCLPinned)' != '$(StarRuptureCLMarker)'"
