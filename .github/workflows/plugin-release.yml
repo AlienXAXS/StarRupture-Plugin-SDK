@@ -26,7 +26,9 @@
 #   nexus_description_file - BBCode file that replaces the Nexus page description when it exists
 #                            (default nexus/description.bbcode).
 #   sdk_repository, sdk_ref - Where to take the Plugin SDK headers from (default: the default
-#                            branch of AlienXAXS/StarRupture-Plugin-SDK).
+#                            branch of AlienXAXS/StarRupture-Plugin-SDK). The Game-SDK comes
+#                            from that checkout's "StarRupture SDK" submodule, at the commit
+#                            the checkout pins.
 #   dry_run                - Build and package, upload the files as a workflow artifact, but
 #                            create no GitHub release and upload nothing to Nexus.
 #
@@ -114,12 +116,7 @@ jobs:
           repository: ${{ inputs.sdk_repository }}
           ref: ${{ inputs.sdk_ref }}
           path: plugin-sdk
-
-      - name: Checkout Game SDK
-        uses: actions/checkout@v4
-        with:
-          repository: AlienXAXS/StarRupture-Game-SDK
-          path: game-sdk
+          submodules: true
 
       - name: Add MSBuild to PATH
         uses: microsoft/setup-msbuild@v2
@@ -232,7 +229,7 @@ jobs:
               /p:Platform=x64 `
               /p:PostBuildEventUseInBuild=false `
               /p:ModLoaderBuildTag="$env:TAG" `
-              /p:GameSDKRoot="${{ github.workspace }}\game-sdk" `
+              /p:GameSDKRoot="${{ github.workspace }}\plugin-sdk\StarRupture SDK" `
               /p:PluginSDKInclude="${{ github.workspace }}\plugin-sdk\include" `
               /m `
               /v:minimal
