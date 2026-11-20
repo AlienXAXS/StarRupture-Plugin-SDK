@@ -3,43 +3,74 @@
 
   <!-- ============================================================
        PLUGIN_GAME_BUILT_CL
-       The game build (CL) the plugin's Game-SDK was generated from,
-       stored in PluginInfo::gameBuiltCL by plugin_interface.h. A
-       plugin that sets PLUGIN_MAP_MIGRATED needs it.
+       The game build (CL) of the Game-SDK headers the plugin compiles
+       against, stored in PluginInfo::gameBuiltCL by plugin_interface.h.
+       The loader trusts it, so it has to be the headers' own number.
 
-       Taken, in order, from:
-         1. PluginGameBuiltCL: /p:PluginGameBuiltCL=<CL> on the build,
-            or a PluginGameBuiltCL property the plugin sets before it
-            imports this file (its Shared.props or project);
-         2. the build_cl.txt beside the Game-SDK's Client\ or Server\
-            folder (GameSDKRoot, else the StarRupture SDK folder);
-         3. nothing: no define, and the plugin declares build 0.
+       The number comes from the headers, never from the plugin:
+         build_cl.txt in the Game-SDK's Client\ or Server\ folder.
+       The folder is the one on the include path (StarRuptureSDKConfigDir,
+       else GameSDKRoot, else the StarRupture SDK folder), for the Client
+       or Server side of the configuration (the Debug and Release
+       configurations are Server). No plugin edit is needed when the
+       headers move: the next build declares the new number.
 
-       Import it from the plugin's Shared.props, after GameSDKRoot
-       and PluginSDKInclude are set:
+       A plugin may still state a build with a PluginGameBuiltCL property
+       (/p:PluginGameBuiltCL=<CL>, or one the plugin sets before it imports
+       this file). That value never fails a build:
+         - build_cl.txt there and different: the headers win and the build
+           prints warning PLUGINCL004 naming both numbers;
+         - build_cl.txt missing or not a number: the pin is used, with
+           warning PLUGINCL001 (the declaration could not be checked);
+         - neither: no define, as before (the plugin declares 0, which the
+           loader reads as CL-127004).
+
+       Import it from the plugin's Shared.props, after GameSDKRoot,
+       StarRuptureSDKConfigDir and PluginSDKInclude are set:
          <Import Project="$(PluginSDKInclude)\..\PluginGameBuild.props"
                  Condition="Exists('$(PluginSDKInclude)\..\PluginGameBuild.props')" />
        ============================================================ -->
   <PropertyGroup>
-    <StarRuptureGameSDKRoot Condition="'$(GameSDKRoot)' != ''">$(GameSDKRoot)</StarRuptureGameSDKRoot>
-    <StarRuptureGameSDKRoot Condition="'$(GameSDKRoot)' == ''">$(SolutionDir)StarRupture SDK</StarRuptureGameSDKRoot>
+    <StarRuptureCLSide Condition="$(Configuration.Contains('Client'))">Client</StarRuptureCLSide>
+    <StarRuptureCLSide Condition="'$(StarRuptureCLSide)' == ''">Server</StarRuptureCLSide>
+    <StarRuptureCLDir Condition="'$(StarRuptureSDKConfigDir)' != ''">$(StarRuptureSDKConfigDir.Split(';')[0])</StarRuptureCLDir>
+    <StarRuptureCLDir Condition="'$(StarRuptureCLDir)' == '' And '$(GameSDKRoot)' != ''">$(GameSDKRoot)\$(StarRuptureCLSide)</StarRuptureCLDir>
+    <StarRuptureCLDir Condition="'$(StarRuptureCLDir)' == ''">$(SolutionDir)StarRupture SDK\$(StarRuptureCLSide)</StarRuptureCLDir>
+    <StarRuptureCLDir>$([MSBuild]::EnsureTrailingSlash($([MSBuild]::NormalizePath('$(MSBuildProjectDirectory)', '$(StarRuptureCLDir)'))))</StarRuptureCLDir>
+    <StarRuptureCLFile>$(StarRuptureCLDir)build_cl.txt</StarRuptureCLFile>
   </PropertyGroup>
-  <PropertyGroup Condition="$(Configuration.Contains('Client'))">
-    <StarRuptureBuildCLFile>$(StarRuptureGameSDKRoot)\Client\build_cl.txt</StarRuptureBuildCLFile>
-  </PropertyGroup>
-  <PropertyGroup Condition="$(Configuration.Contains('Server'))">
-    <StarRuptureBuildCLFile>$(StarRuptureGameSDKRoot)\Server\build_cl.txt</StarRuptureBuildCLFile>
+  <PropertyGroup Condition="Exists('$(StarRuptureCLFile)')">
+    <StarRuptureCLRaw>$([System.IO.File]::ReadAllText('$(StarRuptureCLFile)').Trim())</StarRuptureCLRaw>
   </PropertyGroup>
   <PropertyGroup>
-    <StarRuptureGameBuiltCL>$(PluginGameBuiltCL.Trim())</StarRuptureGameBuiltCL>
-  </PropertyGroup>
-  <PropertyGroup Condition="'$(StarRuptureGameBuiltCL)' == '' And '$(StarRuptureBuildCLFile)' != '' And Exists('$(StarRuptureBuildCLFile)')">
-    <StarRuptureGameBuiltCL>$([System.IO.File]::ReadAllText('$(StarRuptureBuildCLFile)').Trim())</StarRuptureGameBuiltCL>
+    <StarRuptureCLMarker Condition="'$(StarRuptureCLRaw)' != '' And $([System.Text.RegularExpressions.Regex]::IsMatch('$(StarRuptureCLRaw)', '^[0-9]+$'))">$(StarRuptureCLRaw)</StarRuptureCLMarker>
+    <StarRuptureCLPinned>$(PluginGameBuiltCL.Trim())</StarRuptureCLPinned>
+    <StarRuptureGameBuiltCL>$(StarRuptureCLMarker)</StarRuptureGameBuiltCL>
+    <StarRuptureGameBuiltCL Condition="'$(StarRuptureGameBuiltCL)' == ''">$(StarRuptureCLPinned)</StarRuptureGameBuiltCL>
   </PropertyGroup>
   <ItemDefinitionGroup Condition="'$(StarRuptureGameBuiltCL)' != ''">
     <ClCompile>
       <PreprocessorDefinitions>PLUGIN_GAME_BUILT_CL=$(StarRuptureGameBuiltCL)u;%(PreprocessorDefinitions)</PreprocessorDefinitions>
     </ClCompile>
   </ItemDefinitionGroup>
+
+  <!-- Warnings only: nothing here fails a build. They run before anything compiles. -->
+  <Target Name="PluginGameBuiltCLCheck" BeforeTargets="ClCompile">
+    <PropertyGroup>
+      <StarRuptureCLNowDir>$(StarRuptureSDKConfigDir.Split(';')[0])</StarRuptureCLNowDir>
+    </PropertyGroup>
+    <PropertyGroup Condition="'$(StarRuptureCLNowDir)' != ''">
+      <StarRuptureCLNowDir>$([MSBuild]::EnsureTrailingSlash($([MSBuild]::NormalizePath('$(MSBuildProjectDirectory)', '$(StarRuptureCLNowDir)'))))</StarRuptureCLNowDir>
+    </PropertyGroup>
+    <Warning Code="PLUGINCL001"
+             Condition="'$(StarRuptureCLMarker)' == '' And '$(StarRuptureCLPinned)' != ''"
+             Text="PLUGIN_GAME_BUILT_CL: $(StarRuptureCLFile) is missing, empty or not a number, so the game build of the Game-SDK headers cannot be checked. This build declares $(StarRuptureCLPinned), from PluginGameBuiltCL. Use a Game-SDK that has build_cl.txt to take the number from the headers." />
+    <Warning Code="PLUGINCL004"
+             Condition="'$(StarRuptureCLMarker)' != '' And '$(StarRuptureCLPinned)' != '' And '$(StarRuptureCLPinned)' != '$(StarRuptureCLMarker)'"
+             Text="PLUGIN_GAME_BUILT_CL: PluginGameBuiltCL says $(StarRuptureCLPinned), but the Game-SDK headers in $(StarRuptureCLDir) are build $(StarRuptureCLMarker). The headers win: this build declares $(StarRuptureCLMarker). Remove the PluginGameBuiltCL line from your Shared.props. A plugin that is not migrated to the version map then runs only on build $(StarRuptureCLMarker); to run on other builds, migrate it (PLUGIN_MAP_MIGRATED) or compile against that build's Game-SDK." />
+    <Warning Code="PLUGINCL005"
+             Condition="'$(StarRuptureCLNowDir)' != '' And '$(StarRuptureCLNowDir)' != '$(StarRuptureCLDir)'"
+             Text="PLUGIN_GAME_BUILT_CL: the Game-SDK folder on the include path is $(StarRuptureCLNowDir), but PluginGameBuild.props read the build from $(StarRuptureCLDir). Import PluginGameBuild.props after StarRuptureSDKConfigDir is set." />
+  </Target>
 
 </Project>
