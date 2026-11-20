@@ -897,10 +897,16 @@ version object map (see the
 [worked example](#worked-example-read-a-member-and-run-on-a-later-game-build)).
 
 **A plugin that must stay on CL-127004.** Build it against the CL-127004 Game-SDK, the commit
-`659656c` of the Game-SDK repository (its `main`):
+`659656c` of the Game-SDK repository:
 
-1. Check out the Game-SDK at `659656c` and point `GameSDKRoot` at it:
-   `/p:GameSDKRoot=<path to that checkout>`.
+1. Check out the Game-SDK at `659656c`, then point your build at that checkout. Override the one
+   property your `Shared.props` builds its include path from:
+   - it sets `StarRuptureSDKConfigDir`: override `StarRuptureSDKConfigDir`;
+   - else it sets `GameSDKRoot`: override `GameSDKRoot`;
+   - else it uses `SolutionDir` (the `StarRupture SDK` folder under it): override `SolutionDir`.
+
+   For example `/p:GameSDKRoot=<path to that checkout>`. Overriding a property your
+   `Shared.props` does not use has no effect.
 2. Set `PluginGameBuiltCL` to 127004 in your `Shared.props`, or build with
    `/p:PluginGameBuiltCL=127004`. That commit has no `build_cl.txt`, so the pin is what the plugin
    declares (with warning `PLUGINCL001`, because it could not be checked). Without a pin the
