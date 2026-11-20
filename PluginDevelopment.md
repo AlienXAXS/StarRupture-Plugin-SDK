@@ -142,7 +142,7 @@ AnyFolder\
   StarRupture-Plugin-<Name>\
 ```
 
-`--recursive` also fetches the Game-SDK headers (`StarRupture SDK`) that live inside the Plugin SDK. A plugin that has its own `StarRupture SDK` submodule uses that one instead. The reusable release workflow (`plugin-release.yml`) uses the Game-SDK commit the checked-out Plugin SDK pins, so a release builds against the same headers as your local build. To point the build somewhere else, pass the paths on the command line; they win over the defaults:
+`--recursive` also fetches the Game-SDK headers (`StarRupture SDK`) that live inside the Plugin SDK. A plugin that has its own `StarRupture SDK` submodule uses that one instead. The reusable release workflow (`plugin-release.yml`) uses the Game-SDK commit that the Plugin SDK it checks out pins (see [Your game build](#your-game-build-plugin_game_built_cl)). To point the build somewhere else, pass the paths on the command line; they win over the defaults:
 
 ```
 msbuild /p:Configuration="Client Release" /p:Platform=x64 ^
@@ -879,15 +879,20 @@ The `PropertyGroup` is the pin, and is optional. The SDK's own `Shared.props` im
 same way.
 
 **Which build the SDK's Game-SDK gives you.** The `StarRupture SDK` submodule holds one Client
-SDK and one Server SDK, each with a `build_cl.txt`. At the current pin the Client SDK is CL-130045
-and the Server SDK is CL-127004, so a plugin built from this SDK gets `PLUGIN_GAME_BUILT_CL` 130045 on
-a `Client` configuration and 127004 on a `Server` one. A plugin that is not migrated is refused on
-any other game build, so a Client plugin built this way is refused on a CL-127004 client. To run
-on both, make it multi-version: set `PLUGIN_MAP_MIGRATED` and read its per-build game values from the
+SDK and one Server SDK, each with a `build_cl.txt`. The Client SDK is CL-130045 and the Server
+SDK is CL-127004, so a plugin built from this SDK gets `PLUGIN_GAME_BUILT_CL` 130045 on a `Client`
+configuration and 127004 on a `Server` one. A plugin that is not migrated is refused on any other
+game build, so a Client plugin built this way is refused on a CL-127004 client. To run on both,
+make it multi-version: set `PLUGIN_MAP_MIGRATED` and read its per-build game values from the
 loader's version object map (see the
-[worked example](#worked-example-read-a-member-and-run-on-a-later-game-build)). A plugin that must
-stay on CL-127004 builds with `/p:PluginGameBuiltCL=127004` on a Client configuration (or
-pins it as above), or with the older Game-SDK pin that holds the 127004 Client SDK.
+[worked example](#worked-example-read-a-member-and-run-on-a-later-game-build)). A plugin that
+must stay on CL-127004 builds against the CL-127004 Client SDK, which is the Game-SDK commit
+`659656c`. Passing `/p:PluginGameBuiltCL=127004` alone only changes the number the plugin
+declares, not the headers it was built from, so do not use it for that.
+
+The release workflow follows the same rule: it builds with the Game-SDK that the Plugin SDK ref
+(`sdk_ref`) pins, so a Client release made from this SDK is built at CL-130045. To keep the
+older Game-SDK for a release, set `sdk_ref` to an older Plugin SDK tag.
 
 ```cpp
 #include "plugin_map.h"
