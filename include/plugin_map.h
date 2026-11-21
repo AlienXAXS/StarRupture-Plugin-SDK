@@ -1012,7 +1012,11 @@ struct PluginMapFeature
     std::vector<const char*> configKeys;
 
     // True until the loader reports a key of this feature unresolved. Set by
-    // DeclareFeatures, before OnPluginLoadHooks returns; read-only afterwards.
+    // DeclareFeatures, before OnPluginLoadHooks returns. The loader can also
+    // switch it off or back on at any time (a server's host rules, on the game
+    // thread), so read On() where the feature acts, never a copy. A plugin that
+    // wrote or changed something while it was on puts it back when On() turns
+    // false.
     bool on = true;
     bool On() const { return on; }
 };
