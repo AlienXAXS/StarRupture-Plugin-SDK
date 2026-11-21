@@ -15,6 +15,7 @@ Making one DLL run on every game build? Start with [MultiVersionGuide.md](MultiV
 | `include/object_ref.h` | `ObjectRef<T>`: a UObject reference that is safe to keep past the tick it was read on |
 | `include/item_icons.h` | `ItemIcons::Loader`: loads item icons the first time they are drawn, a few per tick (`icon_requests.h` is its request queue) |
 | `include/plugin_images.h` | `PluginImages::Image`: draws an image from the loader's image library, or reserves its space while it loads (interface 77, loader 1.24.0 or newer) |
+| `include/plugin_waypoint.h` | `PluginWaypoint::Waypoint`: a small window with an arrow and a distance that points the player at a target; `Math::` has the bearing and distance arithmetic alone |
 | `PluginGameBuild.props` | Defines `PLUGIN_GAME_BUILT_CL` from the build_cl.txt of the Game-SDK headers a plugin compiles against (a stale pin only warns); import it from a plugin's `Shared.props` |
 | `ExamplePlugin/` | Minimal starter plugin — copy, rename, and go |
 | `StarRupture SDK/` | Dumper-7 generated UE5 SDK headers (Client + Server + Generic) |
@@ -139,6 +140,53 @@ PluginPresets::RenderSavedRow(ui, s_presets, "speed", "Speed", fields, 2,
 Save over a selected saved preset asks "You're saving over ... Continue?" first; it replaces the values the live settings supply and keeps any stored key they do not. Save with nothing selected adds a new entry ("Custom", "Custom 2", ...). The dropdown's "(none)" item clears the selection, and `RowState::ClearSelection()` does the same from code: call it when your own built-in preset buttons or hotkeys apply a built-in, so the row stops showing the old selection (and the next Save adds a new entry unless the values now equal a saved preset). When nothing is selected and the live values equal a saved preset (after a restart, say), the row selects the first such preset, so Save over it works at once; picking "(none)" turns this off until a preset is applied. Built-in presets are never written to the file. The store is thread-safe, so a hotkey can read a preset with `Store::Get` while the panel is open.
 
 Players' files are protected: loading never writes, the first rewrite keeps a `.bak` copy beside the file, and a file with a line the store cannot read, or one that exists but could not be read at load (locked, for example), is left alone for the session (the row says so instead of saving). The tests are in `Tests/PluginPresetsTests/` and build without the game. To also check a real presets file, pass its path as the first argument; the file is only read.
+
+## Waypoint: point the player at something
+
+`include/plugin_waypoint.h` shows a small window with a label, an X button, an arrow that turns with the camera and the distance to a target (`250m`, or `1.2km` past a kilometre). It closes itself when the player is within 10 m of the target, or when the target has been gone for a couple of seconds. It is header-only, uses only `IModLoaderImGui`, and needs no loader support and no version-map rows.
+
+1. Keep one `PluginWaypoint::Waypoint` for the plugin (a static or a member).
+2. Call `Tick(world)` from your engine tick. This is the only call that reads the game, so it must run on the game thread.
+3. Register a widget whose callback calls `Render(ui)`. When `Render` returns false there is nothing to show, so hide the widget. Do the same when `Active()` turns false in your tick.
+4. To start, show the widget and call `Set` with a function that finds the target (below), or `SetActor` with an `ObjectRef<SDK::AActor>` built on the game thread. `Set` and `SetActor` are safe from a button click.
+5. Call `Clear()` to stop.
+
+```cpp
+#include <plugin_waypoint.h>
+
+static PluginWaypoint::Waypoint s_waypoint;
+
+// Called on the game thread every tick while the waypoint is active. Look the
+// target up again each time; do not keep a UObject* between calls.
+static bool FindHome(void* /*user*/, SDK::UWorld* world, PluginWaypoint::Resolved& out)
+{
+    SDK::FVector pos;
+    if (!MyLookUpHome(world, &pos))     // your own lookup
+        return false;                   // gone this tick
+    out.x = pos.X; out.y = pos.Y; out.z = pos.Z;
+    out.label = MyHomeName();           // optional; leave empty to keep the label given to Set
+    return true;
+}
+
+// engine tick:      s_waypoint.Tick(world);
+// widget callback:  if (!s_waypoint.Render(ui)) { /* hide the widget */ }
+// button click:     s_waypoint.Set(&FindHome, nullptr, "Home"); /* show the widget */
+```
+
+The arrow follows the camera, so it stays right in a vehicle or the drone. The arrow size and colour, the 10 m close distance and the grace period before a lost target closes the window are the fields of `PluginWaypoint::Options`, passed to the `Waypoint` constructor. Two waypoints in one window need an `imgui->PushIDInt` around each `Render`, because the X button's id is the same.
+
+A plugin that draws its own marker can use `PluginWaypoint::Math` alone. It takes plain doubles and needs no game types. `RelativeBearingDeg(dx, dy, yawDeg)` gives the angle from where the camera faces to the target: 0 ahead, +90 right, -90 left, +-180 behind. `Distance3dMeters(dx, dy, dz)` turns a world-unit offset (centimetres) into metres. For example, a map that has a world-to-map transform and the target's world x and y:
+
+```cpp
+const double dx = targetX - playerX;
+const double dy = targetY - playerY;
+const double arrow = PluginWaypoint::Math::RelativeBearingDeg(dx, dy, ControlYawDegrees);
+// Rotate your arrow sprite by `arrow` degrees (clockwise from "up"). If the
+// transform's WorldToScreen puts the target outside the map rectangle, draw
+// the arrow at the rectangle's edge instead of on the target.
+```
+
+The tests for `Math::` are in `Tests/WaypointTests/` and build without the game.
 
 ## Interface versioning
 
