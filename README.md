@@ -2,6 +2,8 @@
 
 Everything you need to build plugins for the [StarRupture ModLoader](https://github.com/AlienXAXS/StarRupture-ModLoader) — without forking or building the modloader itself.
 
+Making one DLL run on every game build? Start with [MultiVersionGuide.md](MultiVersionGuide.md).
+
 ## What's in this repo
 
 | Path | Description |
@@ -17,6 +19,7 @@ Everything you need to build plugins for the [StarRupture ModLoader](https://git
 | `ExamplePlugin/` | Minimal starter plugin — copy, rename, and go |
 | `StarRupture SDK/` | Dumper-7 generated UE5 SDK headers (Client + Server + Generic) |
 | `Shared.props` | MSBuild properties for SDK paths and build configs |
+| `MultiVersionGuide.md` | One page: make a plugin run on every game build, and get rows added to the version map |
 | `PluginDevelopment.md` | Full API reference and developer guide |
 
 ## Quick start
