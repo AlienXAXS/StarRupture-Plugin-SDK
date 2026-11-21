@@ -1111,7 +1111,8 @@ namespace PluginSdkRuntime
     // Takes the globals and points the SDK's GObjects and FName::AppendString
     // at them. False when the loader has none to give; the SDK then keeps its
     // Offsets::, which hold only on the build it was generated for, and the
-    // loader does not run this plugin on any other build.
+    // loader does not run this plugin on any other build. The globals' GWorld
+    // is kept for GetWorld, which uses it wherever it is not Offsets::GWorld.
     inline bool Init(IPluginHooks* hooks)
     {
         const PluginSdkGlobals* globals = hooks && hooks->Engine && hooks->Engine->GetSdkGlobals
@@ -1125,14 +1126,16 @@ namespace PluginSdkRuntime
         return true;
     }
 
-    // True on the build the SDK was generated for: no globals from the
-    // loader, or its GObjects and AppendString are where Offsets:: has them.
+    // True when the SDK's Offsets:: can be used as compiled: no globals from
+    // the loader, or its GObjects and AppendString are where Offsets:: has
+    // them and its GWorld (when it found one) is the one Offsets::GWorld names.
     inline bool OnSdkBuild()
     {
         const PluginSdkGlobals* globals = Globals();
         const uintptr_t base = SDK::InSDKUtils::GetImageBase();
         return !globals || (globals->gobjects == base + SDK::Offsets::GObjects
-            && globals->appendString == base + SDK::Offsets::AppendString);
+            && globals->appendString == base + SDK::Offsets::AppendString
+            && (!globals->gworld || globals->gworld == base + SDK::Offsets::GWorld));
     }
 
     // The current world, in place of SDK::UWorld::GetWorld(): the world of the
@@ -1144,12 +1147,13 @@ namespace PluginSdkRuntime
     // world being played. The viewport's world and GWorld are both kept by
     // the game's world context, so they go null together on travel.
     //
-    // On the SDK's own build the members are read as compiled. On any other
-    // they are found by name in the running game's reflection, and their
+    // Where the loader's globals match the SDK's Offsets:: (GObjects,
+    // AppendString and GWorld) the members are read as compiled. Anywhere
+    // else they are found by name in the running game's reflection, and their
     // size checked, the way the loader's map reads a reflected member. GWorld
-    // (Offsets::GWorld, or the one the loader found) only when there is no
-    // engine or no viewport yet (before the engine is up, and on a dedicated
-    // server), or when a member is not found on this build.
+    // (the one the loader found) only when there is no engine or no viewport
+    // yet (before the engine is up, and on a dedicated server), or when a
+    // member is not found on this build.
     template <class World = SDK::UWorld, class Engine = SDK::UEngine>
     World* GetWorld()
     {

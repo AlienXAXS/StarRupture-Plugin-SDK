@@ -17,6 +17,7 @@ namespace SDK
 	{
 		constexpr int32 GObjects = 0;
 		constexpr int32 AppendString = 0;
+		constexpr int32 GWorld = 0;
 	}
 
 	namespace InSDKUtils
