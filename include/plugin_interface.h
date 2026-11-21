@@ -1625,6 +1625,10 @@ struct PluginSdkGlobals
 
 struct IPluginEngineEvents
 {
+	// RegisterOnInit: registered from PluginInit, the callback runs at once, inside
+	// the call, on the loader's init thread, not the game thread (the game's main
+	// thread is parked meanwhile). Do not wait for the game thread from it. If the
+	// loader could not hook engine init, it runs later on the game thread.
 	void      (*RegisterOnInit)(PluginEngineInitCallback);
 	void      (*UnregisterOnInit)(PluginEngineInitCallback);
 	void      (*RegisterOnShutdown)(PluginEngineShutdownCallback);

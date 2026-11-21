@@ -880,7 +880,9 @@ namespace PluginMap
     // spells it ("ECrPlayerControlState"), `entry` the entry without the enum's
     // prefix ("DeconstructMode"). `value` is written only on Found.
     //
-    // GAME THREAD ONLY, like any UObject access. It walks every object the
+    // GAME THREAD ONLY, like any UObject access. OnEngineInit is not the game
+    // thread (the main thread is parked there, so the call works, but look the
+    // value up on a tick if you can). It walks every object the
     // game has loaded, so look a value up once, when the feature first runs,
     // and keep it; never per frame. On EntryMissing or EnumMissing the plugin
     // logs it once and skips the path that needs the value, or uses its
@@ -1140,6 +1142,8 @@ namespace PluginSdkRuntime
 
     // The current world, in place of SDK::UWorld::GetWorld(): the world of the
     // game viewport (UEngine::GameViewport->World). Game thread only.
+    // OnEngineInit is not the game thread: the call works there, with the main
+    // thread parked, but may return null that early.
     //
     // The engine's GWorld global is not that world. Code that builds a world
     // of its own (a preview or capture world the engine is not told about)

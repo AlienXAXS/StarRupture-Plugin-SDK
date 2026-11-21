@@ -1472,7 +1472,7 @@ if (hooks->HUD) {
 `IPluginEngineEvents` -- engine lifecycle subscriptions.
 
 ```cpp
-// Called once when UGameEngine::Init completes
+// Called once the engine is up (see the notes below)
 void OnEngineInit() { LOG_INFO("Engine ready"); }
 hooks->Engine->RegisterOnInit(&OnEngineInit);
 hooks->Engine->UnregisterOnInit(&OnEngineInit);  // call in PluginShutdown
@@ -1490,6 +1490,13 @@ hooks->Engine->UnregisterOnTick(&OnTick);
 // Resolved address of CoreUObject::StaticLoadObject (0 if not found). All builds.
 uintptr_t addr = hooks->Engine->GetStaticLoadObjectAddress();
 ```
+
+**Which thread runs `OnEngineInit`?** Not the game thread. A plugin registers it from `PluginInit`, by which time the engine is already up, so the callback runs at once, inside `RegisterOnInit`, on the loader's init thread. The game's main thread is parked until every plugin has loaded (the loader waits at most 120 seconds, then lets the game go on). `IsGameThread()` is false there. Client and server behave the same.
+
+- Reading UObjects is fine, because the game is not running. Do not wait for the game thread from the callback (for example, blocking on a `PostToGameThread` result): it is parked, so the wait only ends at the timeout.
+- Do not keep a UObject pointer from the callback; objects do not survive travel and GC. Look them up again when you need them.
+- `GetWorld()` may return null this early (no viewport yet, and none on a dedicated server). Check it.
+- If the loader could not hook engine init, the callback fires later instead, on the game thread, during world start.
 
 **Am I on the game thread? (v72)** `IsGameThread()` is true when the caller is on the game thread, the only thread where UObjects may be touched. Use it in code that more than one thread can reach, such as a helper called from both a tick and a render callback:
 
