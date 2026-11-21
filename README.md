@@ -173,7 +173,7 @@ static bool FindHome(void* /*user*/, SDK::UWorld* world, PluginWaypoint::Resolve
 // button click:     s_waypoint.Set(&FindHome, nullptr, "Home"); /* show the widget */
 ```
 
-The arrow follows the camera, so it stays right in a vehicle or the drone. The arrow size and colour, the 10 m close distance and the grace period before a lost target closes the window are the fields of `PluginWaypoint::Options`, passed to the `Waypoint` constructor. Two waypoints in one window need an `imgui->PushIDInt` around each `Render`, because the X button's id is the same.
+The arrow follows the camera's yaw, and the distance and the close check are measured from the camera's view target (the character on foot; the drone or vehicle while you are in it). The arrow size and colour, the 10 m close distance and the grace period before a lost target closes the window are the fields of `PluginWaypoint::Options`, passed to the `Waypoint` constructor. Two waypoints in one window need an `imgui->PushIDInt` around each `Render`, because the X button's id is the same.
 
 A plugin that draws its own marker can use `PluginWaypoint::Math` alone. It takes plain doubles and needs no game types. `RelativeBearingDeg(dx, dy, yawDeg)` gives the angle from where the camera faces to the target: 0 ahead, +90 right, -90 left, +-180 behind. `Distance3dMeters(dx, dy, dz)` turns a world-unit offset (centimetres) into metres. For example, a map that has a world-to-map transform and the target's world x and y:
 
@@ -181,7 +181,9 @@ A plugin that draws its own marker can use `PluginWaypoint::Math` alone. It take
 const double dx = targetX - playerX;
 const double dy = targetY - playerY;
 const double arrow = PluginWaypoint::Math::RelativeBearingDeg(dx, dy, ControlYawDegrees);
-// Rotate your arrow sprite by `arrow` degrees (clockwise from "up"). If the
+// For a map that turns with the player, draw the arrow `arrow` degrees
+// clockwise from "up". A map that keeps north at the top needs the target's
+// bearing from north instead, not this. If the
 // transform's WorldToScreen puts the target outside the map rectangle, draw
 // the arrow at the rectangle's edge instead of on the target.
 ```

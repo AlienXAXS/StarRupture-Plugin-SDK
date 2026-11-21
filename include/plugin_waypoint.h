@@ -83,7 +83,7 @@ namespace PluginWaypoint
 		// The waypoint closes itself within this many metres of the target.
 		float autoCloseMeters = 10.0f;
 		// How many ticks in a row the resolver may fail before the waypoint
-		// closes. While it fails the window says "Location lost."
+		// closes (it closes on the next failure after this many). While it fails the window says "Location lost."
 		int lostGraceTicks = 120;
 		// Side of the square reserved for the arrow, in pixels.
 		float arrowAreaSize = 90.0f;
@@ -126,6 +126,7 @@ namespace PluginWaypoint
 		{
 			std::lock_guard<std::mutex> lock(m_mutex);
 			m_active = false;
+			++m_generation;
 		}
 
 		// True from Set/SetActor until the waypoint is cleared, reached or lost.
@@ -146,6 +147,7 @@ namespace PluginWaypoint
 			void* user;
 			ObjectRef<SDK::AActor> actorRef;
 			char fallback[kLabelSize];
+			unsigned generation;
 			{
 				std::lock_guard<std::mutex> lock(m_mutex);
 				if (!m_active)
@@ -154,6 +156,7 @@ namespace PluginWaypoint
 				user = m_user;
 				actorRef = m_actor;
 				std::memcpy(fallback, m_label, kLabelSize);
+				generation = m_generation;
 			}
 
 			Snapshot snap;
@@ -218,11 +221,13 @@ namespace PluginWaypoint
 			}
 
 			std::lock_guard<std::mutex> lock(m_mutex);
-			if (!m_active)
+			// Set, SetActor or Clear ran while the target was being resolved:
+			// this result belongs to the old target, so drop it.
+			if (!m_active || generation != m_generation)
 				return;
 
 			m_lostTicks = lostThisTick ? m_lostTicks + 1 : 0;
-			if (m_lostTicks >= m_opt.lostGraceTicks)
+			if (lostThisTick && m_lostTicks > m_opt.lostGraceTicks)
 			{
 				m_active = false;
 				return;
@@ -315,6 +320,7 @@ namespace PluginWaypoint
 			m_snap = Snapshot();
 			std::memcpy(m_snap.label, m_label, kLabelSize);
 			m_active = true;
+			++m_generation;
 		}
 
 		// Copies as much of text as fits, without cutting a UTF-8 character.
@@ -377,6 +383,7 @@ namespace PluginWaypoint
 
 		mutable std::mutex m_mutex;
 		bool m_active = false;
+		unsigned m_generation = 0;   // changes whenever the target is set or cleared
 		ResolveFn m_fn = nullptr;
 		void* m_user = nullptr;
 		ObjectRef<SDK::AActor> m_actor;
