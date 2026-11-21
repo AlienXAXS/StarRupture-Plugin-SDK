@@ -13,7 +13,7 @@ Follow these steps and your plugin is one DLL that runs on every game build the 
 
 The last argument of `SR_FIELD` is the flags argument. `0` means no flag: the loader answers with the running build's offset from the version map, or from the game's reflection when the map has no row. Add a flag only when you must: `PLUGIN_FIELD_NATIVE` for a member the game's reflection does not describe, `PLUGIN_FIELD_CHECK` for a struct you copy by value.
 
-Reflected members are read from the running game on the client and on a dedicated server. The server's version map holds no field rows yet, so there a member with a row of your own for the running build uses that row, and a member without one is read by reflection ([Game-class fields](PluginDevelopment.md#game-class-fields-resolvefield)). A member the game's reflection does not describe needs your own row on a server; [ask us](#ask-us-for-rows) if you need one.
+Reflected members are read from the running game on the client and on a dedicated server. The loader also carries version map rows for the dedicated server builds it knows (currently CL 127004: functions, globals, member offsets and struct sizes). They are served only when the running server exe matches that build exactly. A server plugin asks for the same keys as a client plugin and reads them from the map. On a server build the loader has no rows for, a member with a row of your own for the running build uses that row, and a member without one is read by reflection ([Game-class fields](PluginDevelopment.md#game-class-fields-resolvefield)). A member the game's reflection does not describe needs your own row there; [ask us](#ask-us-for-rows) if you need one.
 
 ## Worked example
 
