@@ -766,8 +766,8 @@ working when the game updates. Add a flag only when the list below says you must
 - **`PLUGIN_FIELD_BITFIELD`**: the member must be a bool; `boolMask` is filled in.
 
 `className` is the Dumper-7 name, prefix letter included (`ACrCrafter`, `FCrPackageTransportConnectionData`);
-the member name is matched exactly. Reflected fields are read on the client only: on a dedicated
-server they fail, so ask for them in your client build.
+the member name is matched exactly. Reflected fields are read from the running game on the client and on a dedicated
+server.
 
 The rows come from the loader's own version map first, when it has the request's `key` and that key
 names the same class and member (or the member one of its rows records as renamed); your
@@ -776,8 +776,9 @@ row for the same changelist fails the request, and a key that names another clas
 aside with a log line. So a member the map holds resolves on a new build with no row of yours. The
 class is compared as written, and the map's keys carry the short name, so a request whose
 `className` is a `/Script/<Module>.<Name>` path reads your candidates only: a short name two modules
-share cannot say which of the two classes the map's rows describe. The dedicated server uses your
-candidates only and does not bound a native member.
+share cannot say which of the two classes the map's rows describe. The dedicated server's map holds no
+field rows yet: a member with a candidate of your own for the running changelist uses it, a member
+without one is read by reflection, and a native member is not bounded.
 
 A failure is recorded against your plugin like a missed pattern, so it is refused with the reason
 in the failure window. The log has one line per field:
