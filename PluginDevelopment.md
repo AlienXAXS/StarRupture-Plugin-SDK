@@ -665,9 +665,11 @@ New to this? [Make your plugin work on every game build](MultiVersionGuide.md) i
 From v72 the loader carries its own version map: rows for each game build it supports, kept up to
 date by its CI. What the map holds, how the loader picks a row and how the map reaches players is in
 [VersionMap.md](https://github.com/AlienXAXS/StarRupture-ModLoader/blob/main/VersionMap.md). With `PLUGIN_SCAN_FLAG_MAP_KEY`, `hookName` is a key in that map, and `pattern` and
-`candidates` become your own fallback, each of which may be null. Main module only; the dedicated
-server's map holds no rows, so there a key runs on your pattern and candidates alone (the refused
-names below still apply).
+`candidates` become your own fallback, each of which may be null. Main module only. The map also holds
+rows for the dedicated server builds the loader knows (currently CL 127004), served only when the
+running server exe matches that build exactly; a server plugin asks for the same keys as a client
+plugin. On a server build the loader has no rows for, a key runs on your pattern and candidates
+alone, as on an unknown client build (the refused names below still apply).
 
 ```cpp
 PluginScanRequest req = PLUGIN_SCAN_REQUEST_INIT;
@@ -776,9 +778,10 @@ row for the same changelist fails the request, and a key that names another clas
 aside with a log line. So a member the map holds resolves on a new build with no row of yours. The
 class is compared as written, and the map's keys carry the short name, so a request whose
 `className` is a `/Script/<Module>.<Name>` path reads your candidates only: a short name two modules
-share cannot say which of the two classes the map's rows describe. The dedicated server's map holds no
-field rows yet: a member with a candidate of your own for the running changelist uses it, a member
-without one is read by reflection, and a native member is not bounded.
+share cannot say which of the two classes the map's rows describe. The map's field rows cover the dedicated
+server builds the loader knows too (currently CL 127004, exact match of the running server exe). On a
+server build it has no rows for, a member with a candidate of your own for the running changelist
+uses it, a member without one is read by reflection, and a native member is not bounded.
 
 A failure is recorded against your plugin like a missed pattern, so it is refused with the reason
 in the failure window. The log has one line per field:
