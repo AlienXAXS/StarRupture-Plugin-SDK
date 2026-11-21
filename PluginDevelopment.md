@@ -2237,6 +2237,15 @@ if (g_self->hooks->Network) {
 
 Packets are routed by plugin name (from `self->name`) and type tag, so different plugins cannot accidentally receive each other's packets.
 
+**Optional: `GetPluginWireInfo`.** Packets only flow between copies of a plugin that have the same version string. If you release a new version whose packet layout did not change, export `GetPluginWireInfo` so the older copy keeps receiving your data. Without it, versions must match exactly. Example: version 0.12.0 has the same layout as 0.11.0, so it lists 0.11.0:
+
+```cpp
+static const PluginWireInfo kWire = { kSchemaVersion, "0.11.0" };
+extern "C" __declspec(dllexport) const PluginWireInfo* GetPluginWireInfo() { return &kWire; }
+```
+
+`wireId` is a number you raise whenever the layout changes. `acceptVersions` is a `;`-separated list of exact version strings with the same layout. The header comment above `PluginWireInfo` has the full rules.
+
 ---
 
 #### hooks->NativePointers
