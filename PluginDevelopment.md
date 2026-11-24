@@ -317,7 +317,7 @@ Hosted at the URL stored in the sidecar, fetched fresh on every boot:
 |-------|-------------|
 | `plugin_name` | Display name used in log messages |
 | `version` | Version string compared against `update_state.ini` to decide whether to download |
-| `interface_version_min` | The interface level this build declares (`PLUGIN_DECLARED_INTERFACE`). A loader whose maximum is lower could not load this build, so it skips the update and keeps the copy that works |
+| `interface_version_min` | The interface version this build reports (`PLUGIN_INTERFACE_VERSION`). A loader whose maximum is lower could not load this build, so it skips the update and keeps the copy that works |
 | `interface_version_max` | Highest interface version this build supports |
 | `download_url` | Direct URL to the DLL to download if an update is needed |
 
@@ -2410,7 +2410,7 @@ g_icons.Shutdown();
 
 The image library is the loader's one place for game images. It reads an image the first time it is drawn, keeps a small copy for the session and gives copies up only when its memory cap is reached. It replaces the item icon helper above for new plugins: use `include/plugin_images.h` and `hooks->Images` instead of `item_icons.h`. The library is client only. Include `plugin_images.h` after `plugin_interface.h`.
 
-**Loader requirement.** `hooks->Images` exists only in a loader release that has the image library (interface v77, loader 1.24.0 or newer); it is null on a server or generic build. A plugin built against a header that has the table needs such a loader, and an older loader refuses it. A plugin built against a header without the table still compiles the same `PluginImages::Image` call: it reserves the space and draws nothing. `PluginImages::Image` calls `GetSized`, the last entry of the table, and a plugin cannot ask the loader which interface number it has, so the helper cannot tell a shorter table from the full one. Declare 77 when using the image library without v78 features; current headers default to 78. A plugin may deliberately declare 75 only when it uses neither v77 image-library nor v78 triangle functionality and needs compatibility with loaders that support at most v75. Older loaders reject plugins declaring a version above their maximum. Check `hooks->Images` before you call the table yourself.
+**Loader requirement.** `hooks->Images` exists only in a loader release that has the image library (interface v77, loader 1.24.0 or newer); it is null on a server or generic build. A plugin built against a header that has the table needs such a loader, and an older loader refuses it. A plugin built against a header without the table still compiles the same `PluginImages::Image` call: it reserves the space and draws nothing. `PluginImages::Image` calls `GetSized`, the last entry of the table, and a plugin cannot ask the loader which interface number it has, so the helper cannot tell a shorter table from the full one. Declare 77 when using the image library: set `PLUGIN_NEEDS_INTERFACE=77` in the project (the default is 75, which hides `hooks->Images`). A plugin may deliberately declare 75 only when it uses neither v77 image-library nor v78 triangle functionality and needs compatibility with loaders that support at most v75. Older loaders reject plugins declaring a version above their maximum. Check `hooks->Images` before you call the table yourself.
 
 1. Get an id once and keep it. The same name or path always gives the same id.
 2. In the render callback, call `PluginImages::Image` with that id and a size.

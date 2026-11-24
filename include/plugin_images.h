@@ -27,8 +27,8 @@
 // built against a header without hooks->Images), this reserves the space and
 // draws nothing. The call reads hooks->Images->GetSized, which a loader with
 // interface 77 or later has, and a plugin cannot ask the loader which number it
-// has. Use this helper only in a plugin that declares 77 or later (78 is the
-// current default): a loader with a lower maximum then refuses the plugin
+// has. Use this helper only in a plugin that declares 77 or later
+// (PLUGIN_NEEDS_INTERFACE=77 in the project): a loader with a lower maximum then refuses the plugin
 // instead of running it on a shorter table.
 //
 // Size icons from the loader's font, so they grow with it. SizeForFont(imgui, 28.0f)

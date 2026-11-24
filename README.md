@@ -192,7 +192,7 @@ The tests for `Math::` are in `Tests/WaypointTests/` and build without the game.
 
 ## Interface versioning
 
-Your plugin declares the interface level it needs. A ModLoader refuses it only when that level is higher than the newest one the ModLoader knows, so the lower you can honestly declare, the more ModLoaders load your plugin, even when you build against the newest SDK.
+Your plugin declares the interface level it needs. A ModLoader refuses a plugin for its interface level only when that level is higher than the newest one the ModLoader knows, so the lower you can honestly declare, the more ModLoaders load your plugin, even when you build against the newest SDK.
 
 1. Set `PLUGIN_NEEDS_INTERFACE` in your project's preprocessor definitions (every configuration) to the lowest level your plugin uses. Unset, it is 75.
 2. Fill `PluginInfo` with `PLUGIN_DECLARED_INTERFACE`, not a number.
@@ -214,12 +214,12 @@ static PluginInfo s_pluginInfo = {
 };
 ```
 
-The plugin is built on the newest SDK but declares 77, so it loads on ModLoader v1.24.0 and later. Without the define the compiler stops at `hooks->Images`. A plugin that touches nothing above 75 needs no define at all and loads on v1.23.0 and later.
+The plugin is built on the newest SDK but declares 77, so it loads on ModLoader v1.24.0 and later. Without the define the compiler stops at `hooks->Images`. `include/plugin_images.h` does not stop you: a plugin that includes it needs `PLUGIN_NEEDS_INTERFACE=77` or the images draw nothing. A plugin that touches nothing above 75 needs no define at all and loads on v1.23.0 and later.
 
 | Interface level | First ModLoader that loads it |
 |---|---|
-| 75 (the default) | v1.23.0 |
-| 77 (image library) | v1.24.0 |
+| 72 to 75 (75 is the default) | v1.23.0 |
+| 76 to 77 (77 is the image library) | v1.24.0 |
 | 78 | v1.25.0 |
 | 79 | v1.27.0 |
 | 80 | not released yet |
