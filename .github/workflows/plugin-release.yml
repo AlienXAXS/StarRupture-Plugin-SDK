@@ -275,8 +275,8 @@ jobs:
             if ($null -eq $hdrMin) { throw "Could not find PLUGIN_INTERFACE_VERSION_MIN in plugin_interface.h" }
             if ($null -eq $hdrMax) { throw "Could not find PLUGIN_INTERFACE_VERSION_MAX in plugin_interface.h" }
 
-            # The plugin's own files, without the SDK checkout and build output.
-            $skipDirs = @('.git', 'plugin-sdk', 'build', 'obj', 'node_modules', 'staging-*')
+            # The plugin's own files, without the SDK checkout, build output and test projects.
+            $skipDirs = @('.git', 'plugin-sdk', 'build', 'obj', 'node_modules', 'staging-*', 'Tests')
             $files = New-Object System.Collections.Generic.List[string]
             $stack = New-Object System.Collections.Generic.Stack[string]
             $stack.Push($PluginRoot)
@@ -343,7 +343,7 @@ jobs:
             }
 
             foreach ($hit in $hits) {
-              if ($hit.Value -notmatch '^\d+$') {
+              if ($hit.Value -notmatch '^\d{1,4}$') {
                 throw "PLUGIN_NEEDS_INTERFACE in $($hit.Where) is '$($hit.Value)'. Write it as a plain whole number, for example PLUGIN_NEEDS_INTERFACE=77."
               }
             }

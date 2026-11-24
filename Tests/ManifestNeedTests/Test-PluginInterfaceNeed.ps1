@@ -143,6 +143,15 @@ Case 'SDK checkout and build output are not read' (New-Plugin 'skipdirs' @{
   'plugin-sdk\ExamplePlugin\E.vcxproj' = Vcxproj @((DefGroup 'Client Release|x64' 'PLUGIN_NEEDS_INTERFACE=99'))
   'build\Client Release\junk.props' = Vcxproj @((DefGroup '' 'PLUGIN_NEEDS_INTERFACE=99')) }) 75
 
+Case 'test projects are not read' (New-Plugin 'tests-dir' @{
+  'P.vcxproj' = Vcxproj @()
+  'src\plugin.cpp' = $converted
+  'Tests\T\T.vcxproj' = Vcxproj @((DefGroup 'Client Release|x64' 'PLUGIN_NEEDS_INTERFACE=79')) }) 75
+
+Case 'number too large for an integer' (New-Plugin 'huge' @{
+  'P.vcxproj' = Vcxproj @((DefGroup 'Client Release|x64' 'PLUGIN_NEEDS_INTERFACE=99999999999'))
+  'src\plugin.cpp' = $converted }) 'ERROR:plain whole number'
+
 Case 'comment mentioning PLUGIN_DECLARED_INTERFACE does not count' (New-Plugin 'comment-converted' @{
   'src\plugin.cpp' = "// move to PLUGIN_DECLARED_INTERFACE later`n$unconverted`n" }) 80
 
