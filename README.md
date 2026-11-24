@@ -229,7 +229,7 @@ The plugin is built on the newest SDK but declares 77, so it loads on ModLoader 
 A plugin that needs 73 can still use a member added later, such as `IPluginHooks::Registry` (80), on a loader that has it. Say so with a second define, and the loader says which level it has.
 
 1. Keep `PLUGIN_NEEDS_INTERFACE` at the oldest loader the plugin runs on, and set `PLUGIN_OPTIONAL_INTERFACE` (every configuration, same value in every file) to the newest level it may use. Unset, it is the need.
-2. Put `PLUGIN_EXPORT_HOST_INFO()` once in one `.cpp` file of the plugin. It exports `PluginSetHostInfo`, which a loader with interface 80 calls once before `PluginInit` with its own level.
+2. Put `PLUGIN_EXPORT_HOST_INFO()` once in one `.cpp` file of the plugin. It exports `PluginSetHostInfo`, which a loader with interface 80 calls once, before the plugin's own code runs, with its own level.
 3. Reach the member through its accessor, not through the raw table, and handle `nullptr`:
 
 ```xml
