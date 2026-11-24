@@ -242,6 +242,13 @@
       <EnableUAC>false</EnableUAC>
     </Link>
   </ItemDefinitionGroup>
+  <!-- The interface level this plugin needs: the lowest one whose members it uses.
+       PluginMap::DeclareFeatures needs 73. Raise it only when the compiler says a member is missing. -->
+  <ItemDefinitionGroup>
+    <ClCompile>
+      <PreprocessorDefinitions>PLUGIN_NEEDS_INTERFACE=73;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+  </ItemDefinitionGroup>
   <ItemGroup>
     <ClInclude Include="..\include\plugin_interface.h" />
     <ClInclude Include="plugin.h" />

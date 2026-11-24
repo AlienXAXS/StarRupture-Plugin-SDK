@@ -175,7 +175,7 @@ static PluginInfo s_pluginInfo = {
     "1.0.0",
     "Your Name",
     "What this plugin does",
-    PLUGIN_INTERFACE_VERSION,
+    PLUGIN_DECLARED_INTERFACE,
     PLUGIN_TARGET_SERVER  // or PLUGIN_TARGET_CLIENT -- required since v33
 };
 
@@ -254,7 +254,7 @@ A v70 loader refuses a v71 plugin. A v71 loader built before these two types wer
 Mod loader scans Plugins/ directory
     --> loads MyPlugin.dll
     --> calls GetPluginInfo()    -- reads name, version, interfaceVersion
-    --> version check: must be in [PLUGIN_INTERFACE_VERSION_MIN, MAX]
+    --> version check: the declared level must not be above the loader's own maximum
     --> calls OnPluginLoadHooks(self, scanner)   -- OPTIONAL export, the only place a
                                                    plugin may pattern scan (v62+).
         -- resolve every AOB you depend on
@@ -317,7 +317,7 @@ Hosted at the URL stored in the sidecar, fetched fresh on every boot:
 |-------|-------------|
 | `plugin_name` | Display name used in log messages |
 | `version` | Version string compared against `update_state.ini` to decide whether to download |
-| `interface_version_min` | The interface version this build reports (`PLUGIN_INTERFACE_VERSION`). A loader whose maximum is lower could not load this build, so it skips the update and keeps the copy that works |
+| `interface_version_min` | The interface level this build declares (`PLUGIN_DECLARED_INTERFACE`). A loader whose maximum is lower could not load this build, so it skips the update and keeps the copy that works |
 | `interface_version_max` | Highest interface version this build supports |
 | `download_url` | Direct URL to the DLL to download if an update is needed |
 
@@ -831,7 +831,7 @@ the plugin migrated so it may run on a build it was not compiled for.
    ```cpp
    static PluginInfo s_pluginInfo = {
        "MyPlugin", "1.0.0", "Your Name", "What this plugin does",
-       PLUGIN_INTERFACE_VERSION, PLUGIN_TARGET_CLIENT,
+       PLUGIN_DECLARED_INTERFACE, PLUGIN_TARGET_CLIENT,
        PLUGIN_GAME_BUILT_CL, PLUGIN_MAP_MIGRATED
    };
 
@@ -1317,7 +1317,7 @@ static PluginInfo s_pluginInfo = {
     "1.0.0",
     "Your Name",
     "What this plugin does",
-    PLUGIN_INTERFACE_VERSION,
+    PLUGIN_DECLARED_INTERFACE,
     PLUGIN_TARGET_CLIENT,
     PLUGIN_GAME_BUILT_CL,   // the game build your Game-SDK was generated for
     PLUGIN_MAP_MIGRATED     // only a migrated plugin may run on another game build
@@ -3266,7 +3266,7 @@ down. Full guide: `PakLoading.md` in the mod loader repository.
 
 ## Interface Version Changelog
 
-The loader accepts plugins whose `interfaceVersion` is in `[PLUGIN_INTERFACE_VERSION_MIN, PLUGIN_INTERFACE_VERSION_MAX]`. All interface structs are append-only so older plugins still load without recompilation as long as they are within the supported range.
+The loader refuses a plugin only when its declared `interfaceVersion` is above the loader's own `PLUGIN_INTERFACE_VERSION_MAX` (`PLUGIN_INTERFACE_VERSION_MIN` is not enforced). A plugin declares the lowest level it uses (see "Interface versioning" in the SDK README), so one built on a newer SDK still loads on older loaders. All interface structs are append-only, so older plugins still load without recompilation.
 
 | Version | MIN bumped? | Changes |
 |---------|-------------|---------|
@@ -3339,9 +3339,9 @@ The loader accepts plugins whose `interfaceVersion` is in `[PLUGIN_INTERFACE_VER
 | v77     | no          | **Image library (loader 1.24.0 or newer).** `IPluginHooks` gained `Images` (`IPluginImages`, client only, null on server/generic), appended at the end: `Item`, `Path`, `FromTexture`, `Get`, `State`, `UseSets`, `Canonical` and `GetSized`, which returns a copy of an image made for the exact pixel size you draw it at. `include/plugin_images.h` draws images through it. See [Drawing library images](#drawing-library-images-plugin_imagesh). Plugins using these features must declare 77 or later; a loader older than the declared interface rejects the plugin. MIN remains 70. |
 | v78     | no          | **Bulk textured triangles (ModLoader 1.25.0 or newer).** Appended `DL_AddTexturedTriangles` and its `PluginDrawVertex`, `PluginDrawIndex` and `PluginDrawResult` types to `IModLoaderImGui` without changing the existing table prefix. See the direct draw list section above for its batch, texture, buffer and callback requirements. Plugins declaring 78 are rejected by older loaders, including 1.24.0. Plugins not using v78 features may deliberately declare 77 (including for image-library use) or 75 (when they use neither v77 nor v78 features). MIN remains 70. |
 
-The current `PLUGIN_INTERFACE_VERSION_MIN` is **70** and `PLUGIN_INTERFACE_VERSION_MAX` is **78** (see `plugin_interface.h` for the authoritative value and full per-version changelog comments).
+The current `PLUGIN_INTERFACE_VERSION_MIN` is **70** and `PLUGIN_INTERFACE_VERSION_MAX` is **80** (see `plugin_interface.h` for the authoritative value and full per-version changelog comments).
 
-A plugin built against these headers declares **78** by default (`PLUGIN_INTERFACE_VERSION`). ModLoader 1.25.0 or newer is required for v78; older loaders reject a plugin declaring 78. A plugin using the v77 image library may declare 77, which requires loader 1.24.0 or newer. A plugin using neither v77 nor v78 functionality may deliberately declare 75 for compatibility with loaders supporting versions 70 through 75. MIN remains 70.
+A plugin declares **`PLUGIN_DECLARED_INTERFACE`**, which is the level set by `PLUGIN_NEEDS_INTERFACE` in its project (75 when unset). The header hides every member above that level, so the compiler tells you when a member needs a newer ModLoader: ModLoader 1.24.0 or newer for 77 (image library), 1.25.0 for 78, 1.27.0 for 79; older loaders reject a plugin declaring more than their own maximum. A plugin that uses nothing above 75 loads on ModLoader 1.23.0 and later.
 
 ---
 
@@ -3350,7 +3350,7 @@ A plugin built against these headers declares **78** by default (`PLUGIN_INTERFA
 ### Plugin Not Loading
 
 - Verify the DLL is in `Plugins/` and exports all three functions (`GetPluginInfo`, `PluginInit`, `PluginShutdown`).
-- Check that `interfaceVersion` in `PluginInfo` is within `[MIN, MAX]`. Use the `PLUGIN_INTERFACE_VERSION` macro.
+- Check that `interfaceVersion` in `PluginInfo` is `PLUGIN_DECLARED_INTERFACE` and not above the loader's maximum. A loader older than the declared level refuses the plugin and logs "Plugin interface version N is newer than this loader supports".
 - Check `Plugins/logs/modloader.log` for initialization errors.
 - Ensure the DLL was built for the matching configuration (client/server).
 

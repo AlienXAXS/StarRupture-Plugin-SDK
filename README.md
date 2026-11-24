@@ -192,6 +192,36 @@ The tests for `Math::` are in `Tests/WaypointTests/` and build without the game.
 
 ## Interface versioning
 
-This SDK tracks the current `PLUGIN_INTERFACE_VERSION_MAX` from the modloader. The `PluginInfo` struct your plugin returns must set `interfaceVersion` to `PLUGIN_INTERFACE_VERSION` (defined in `plugin_interface.h`) or the modloader will refuse to load it.
+Your plugin declares the interface level it needs. A ModLoader refuses it only when that level is higher than the newest one the ModLoader knows, so the lower you can honestly declare, the more ModLoaders load your plugin, even when you build against the newest SDK.
+
+1. Set `PLUGIN_NEEDS_INTERFACE` in your project's preprocessor definitions (every configuration) to the lowest level your plugin uses. Unset, it is 75.
+2. Fill `PluginInfo` with `PLUGIN_DECLARED_INTERFACE`, not a number.
+3. Raise the level only when the compiler tells you to. An error such as `'Images': is not a member of 'IPluginHooks'` means that member needs a newer ModLoader; the comment on it in `plugin_interface.h` names the level.
+
+Use the same value in every file you build into the plugin. Two values in one DLL are a link error (`LNK2038`, `PluginNeedsInterface`).
+
+Example: a plugin that draws library images (`IPluginHooks::Images`, since level 77).
+
+```xml
+<PreprocessorDefinitions>PLUGIN_NEEDS_INTERFACE=77;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+```
+
+```cpp
+static PluginInfo s_pluginInfo = {
+    "MyPlugin", "1.0.0", "Your Name", "What this plugin does",
+    PLUGIN_DECLARED_INTERFACE, PLUGIN_TARGET_CLIENT,
+    PLUGIN_GAME_BUILT_CL, PLUGIN_MAP_MIGRATED
+};
+```
+
+The plugin is built on the newest SDK but declares 77, so it loads on ModLoader v1.24.0 and later. Without the define the compiler stops at `hooks->Images`. A plugin that touches nothing above 75 needs no define at all and loads on v1.23.0 and later.
+
+| Interface level | First ModLoader that loads it |
+|---|---|
+| 75 (the default) | v1.23.0 |
+| 77 (image library) | v1.24.0 |
+| 78 | v1.25.0 |
+| 79 | v1.27.0 |
+| 80 | not released yet |
 
 The SDK repo is updated alongside each modloader release.

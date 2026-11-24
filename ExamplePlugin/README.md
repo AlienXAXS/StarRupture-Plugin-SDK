@@ -201,9 +201,10 @@ To create your own plugin:
    "1.0.0",
        "Your Name",     // ? Change
        "Description",   // ? Change
-       PLUGIN_INTERFACE_VERSION
+       PLUGIN_DECLARED_INTERFACE
    };
    ```
+   The project sets `PLUGIN_NEEDS_INTERFACE=73` (the lowest level this example uses). Keep it, or set your own level; see "Interface versioning" in the SDK README.
 
 4. **Update logging macros in plugin_helpers.h**
    ```cpp

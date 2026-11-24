@@ -22,7 +22,7 @@ static PluginInfo s_pluginInfo = {
 	MODLOADER_BUILD_TAG,
 	"Your Name",
 	"A minimal example plugin showing the basic structure required by the mod loader",
-	PLUGIN_INTERFACE_VERSION
+	PLUGIN_DECLARED_INTERFACE
 };
 
 // A feature is a part of the plugin that can be switched off while the rest runs.
