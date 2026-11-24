@@ -31,6 +31,8 @@ Making one DLL run on every game build? Start with [MultiVersionGuide.md](MultiV
 5. **Build** using Visual Studio 2022 with the `Client Release` or `Server Release` configuration
 6. Drop your `.dll` into `Binaries\Win64\Plugins\` alongside `dwmapi.dll` and launch the game
 
+Build against a release tag, or `main`. `main` moves only when the loader is released, so your plugin declares an interface version a released loader accepts. The `next` branch carries the unreleased interface; use it only with a loader built from source.
+
 Plugins in their own repos find this SDK as a sibling folder, so no paths need setting:
 
 ```
