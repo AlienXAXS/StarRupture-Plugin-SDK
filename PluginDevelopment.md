@@ -317,7 +317,7 @@ Hosted at the URL stored in the sidecar, fetched fresh on every boot:
 |-------|-------------|
 | `plugin_name` | Display name used in log messages |
 | `version` | Version string compared against `update_state.ini` to decide whether to download |
-| `interface_version_min` | The interface version this build reports (`PLUGIN_INTERFACE_VERSION`). A loader whose maximum is lower could not load this build, so it skips the update and keeps the copy that works |
+| `interface_version_min` | The interface level the plugin needs: its `PLUGIN_NEEDS_INTERFACE`, or the SDK baseline (75) for a converted plugin that sets none, or the header's `PLUGIN_INTERFACE_VERSION` for a plugin not yet converted. A loader whose maximum is lower could not load this build, so it skips the update and keeps the copy that works |
 | `interface_version_max` | Highest interface version this build supports |
 | `download_url` | Direct URL to the DLL to download if an update is needed |
 
