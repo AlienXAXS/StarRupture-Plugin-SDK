@@ -36,6 +36,11 @@
 # generated notes on the release page, stored as "notes" in the update manifest, and is the
 # Nexus changelog entry. A missing or empty file means the entry links to the release.
 #
+# Interface level: the manifest's interface_version_min is the level the plugin declares, read
+# from PLUGIN_NEEDS_INTERFACE in its project files (vcxproj, props, CMake or a #define). Unset,
+# it is the SDK's PLUGIN_INTERFACE_BASELINE for a plugin that uses PLUGIN_DECLARED_INTERFACE,
+# and the SDK's PLUGIN_INTERFACE_VERSION for a plugin that has not moved to it yet.
+#
 # Secrets (via "secrets: inherit", only when nexus_mod_id is set): NEXUS_APIKEY,
 # NEXUS_CLIENT_GROUP_ID and, with server_build, NEXUS_SERVER_GROUP_ID.
 
@@ -250,16 +255,142 @@ jobs:
           $name     = $env:PLUGIN_NAME
           $dllName  = $env:DLL_NAME
 
-          # The manifest declares [the interface version this build reports, the
-          # newest one the header knows]. Its minimum is the plugin's own
-          # PLUGIN_INTERFACE_VERSION, not the header's MIN: a loader older than that
-          # refuses the plugin, so its auto-updater must not replace a copy that works.
+          # BEGIN plugin-interface-need
+          # The interface level the plugin needs: what it sets as PLUGIN_NEEDS_INTERFACE
+          # (a project-wide define in a vcxproj/props/targets file, a CMake file, or a
+          # #define in its sources). Without one, a plugin that fills PluginInfo with
+          # PLUGIN_DECLARED_INTERFACE needs the header's PLUGIN_INTERFACE_BASELINE, and an
+          # older plugin that still uses PLUGIN_INTERFACE_VERSION needs that number.
+          function Get-PluginInterfaceNeed {
+            param([string]$PluginRoot, [string]$HeaderText)
+
+            function Get-HeaderNumber([string]$name) {
+              $m = [regex]::Match($HeaderText, "#define\s+$name\s+(\d+)")
+              if ($m.Success) { [int]$m.Groups[1].Value } else { $null }
+            }
+            $hdrMin  = Get-HeaderNumber 'PLUGIN_INTERFACE_VERSION_MIN'
+            $hdrMax  = Get-HeaderNumber 'PLUGIN_INTERFACE_VERSION_MAX'
+            $hdrVer  = Get-HeaderNumber 'PLUGIN_INTERFACE_VERSION'
+            $hdrBase = Get-HeaderNumber 'PLUGIN_INTERFACE_BASELINE'
+            if ($null -eq $hdrMin) { throw "Could not find PLUGIN_INTERFACE_VERSION_MIN in plugin_interface.h" }
+            if ($null -eq $hdrMax) { throw "Could not find PLUGIN_INTERFACE_VERSION_MAX in plugin_interface.h" }
+
+            # The plugin's own files, without the SDK checkout, build output and test projects.
+            $skipDirs = @('.git', 'plugin-sdk', 'build', 'obj', 'node_modules', 'staging-*', 'Tests')
+            $files = New-Object System.Collections.Generic.List[string]
+            $stack = New-Object System.Collections.Generic.Stack[string]
+            $stack.Push($PluginRoot)
+            while ($stack.Count -gt 0) {
+              foreach ($item in Get-ChildItem -LiteralPath $stack.Pop() -Force) {
+                if ($item.PSIsContainer) {
+                  $skip = $false
+                  foreach ($pattern in $skipDirs) { if ($item.Name -like $pattern) { $skip = $true } }
+                  if (-not $skip) { $stack.Push($item.FullName) }
+                } else {
+                  $files.Add($item.FullName)
+                }
+              }
+            }
+
+            $hits = New-Object System.Collections.Generic.List[object]
+            $converted = $false
+            foreach ($file in $files) {
+              $rel  = $file.Substring($PluginRoot.Length).TrimStart('\', '/')
+              $leaf = [System.IO.Path]::GetFileName($file)
+              $ext  = [System.IO.Path]::GetExtension($file).ToLowerInvariant()
+
+              if ($ext -in '.vcxproj', '.props', '.targets') {
+                $text = [System.IO.File]::ReadAllText($file)
+                if ($text -notmatch 'PLUGIN_NEEDS_INTERFACE') { continue }
+                try { $xml = [xml]$text } catch { throw "Could not read $rel as XML: $($_.Exception.Message)" }
+                $found = 0
+                foreach ($el in $xml.GetElementsByTagName('PreprocessorDefinitions')) {
+                  # A Condition on the entry or on any group around it names the configuration.
+                  $cond = ''
+                  for ($n = $el; $n -is [System.Xml.XmlElement]; $n = $n.ParentNode) { $cond += ' ' + $n.GetAttribute('Condition') }
+                  $cfg = if ($cond -match 'Debug' -and $cond -notmatch 'Release') { 'Debug' } else { 'Release' }
+                  $label = if ($cond -match "==\s*'([^']+)'") { "$rel [$($Matches[1])]" } else { $rel }
+                  foreach ($token in ($el.InnerText -split ';')) {
+                    if ($token.Trim() -match '^PLUGIN_NEEDS_INTERFACE(=(.*))?$') {
+                      $value = if ($Matches.ContainsKey(2)) { $Matches[2].Trim() } else { '' }
+                      $hits.Add([pscustomobject]@{ Where = $label; Cfg = $cfg; Value = $value })
+                      $found++
+                    }
+                  }
+                }
+                if ($found -eq 0) {
+                  $visible = ($xml.SelectNodes('//text()') | ForEach-Object { $_.Value }) -join ' '
+                  if ($visible -match 'PLUGIN_NEEDS_INTERFACE') {
+                    throw "$rel mentions PLUGIN_NEEDS_INTERFACE outside a PreprocessorDefinitions entry. Set it there, as PLUGIN_NEEDS_INTERFACE=<number>."
+                  }
+                }
+              }
+              elseif ($leaf -eq 'CMakeLists.txt' -or $ext -eq '.cmake') {
+                $text = [regex]::Replace([System.IO.File]::ReadAllText($file), '(?m)#.*$', '')
+                foreach ($m in [regex]::Matches($text, '(?<![A-Za-z0-9_])PLUGIN_NEEDS_INTERFACE(?![A-Za-z0-9_])(=([^\s\)"'';]*))?')) {
+                  $hits.Add([pscustomobject]@{ Where = $rel; Cfg = 'Release'; Value = $m.Groups[2].Value })
+                }
+              }
+              elseif (($ext -in '.h', '.hpp', '.hxx', '.inl', '.c', '.cc', '.cpp', '.cxx') -and $leaf -ne 'plugin_interface.h') {
+                $text = [System.IO.File]::ReadAllText($file)
+                if ($text -notmatch 'PLUGIN_NEEDS_INTERFACE|PLUGIN_DECLARED_INTERFACE') { continue }
+                $text = [regex]::Replace($text, '(?s)/\*.*?\*/|//[^\r\n]*', '')
+                if ($text -match '\bPLUGIN_DECLARED_INTERFACE\b') { $converted = $true }
+                foreach ($m in [regex]::Matches($text, '(?m)^[ \t]*#[ \t]*define[ \t]+PLUGIN_NEEDS_INTERFACE\b[ \t]*(\S*)')) {
+                  $hits.Add([pscustomobject]@{ Where = $rel; Cfg = 'Release'; Value = $m.Groups[1].Value })
+                }
+              }
+            }
+
+            foreach ($hit in $hits) {
+              if ($hit.Value -notmatch '^\d{1,4}$') {
+                throw "PLUGIN_NEEDS_INTERFACE in $($hit.Where) is '$($hit.Value)'. Write it as a plain whole number, for example PLUGIN_NEEDS_INTERFACE=77."
+              }
+            }
+            # Only the Release value ships. A Debug-only value is reported, not used.
+            $release = @($hits | Where-Object { $_.Cfg -eq 'Release' })
+            $debug   = @($hits | Where-Object { $_.Cfg -eq 'Debug' })
+            if (@($release | ForEach-Object { [int]$_.Value } | Select-Object -Unique).Count -gt 1) {
+              $list = ($release | ForEach-Object { "$($_.Where) = $($_.Value)" }) -join '; '
+              throw "PLUGIN_NEEDS_INTERFACE differs between configurations or files ($list). The Release builds must all set the same number."
+            }
+            foreach ($hit in $debug) {
+              if ($release.Count -eq 0 -or [int]$hit.Value -ne [int]$release[0].Value) {
+                Write-Host "::warning::PLUGIN_NEEDS_INTERFACE=$($hit.Value) in $($hit.Where) applies to Debug only and is not used for the manifest."
+              }
+            }
+
+            if ($release.Count -gt 0) {
+              if (-not $converted) {
+                throw "PLUGIN_NEEDS_INTERFACE is set but no source file fills PluginInfo with PLUGIN_DECLARED_INTERFACE, so the plugin still reports the SDK's own level. Use PLUGIN_DECLARED_INTERFACE for interfaceVersion."
+              }
+              $need = [int]$release[0].Value
+              Write-Host "Plugin declares PLUGIN_NEEDS_INTERFACE=$need ($($release[0].Where))."
+            }
+            elseif ($converted) {
+              if ($null -eq $hdrBase) { throw "The plugin uses PLUGIN_DECLARED_INTERFACE but plugin_interface.h has no PLUGIN_INTERFACE_BASELINE. Use a newer sdk_ref." }
+              $need = $hdrBase
+              Write-Host "PLUGIN_NEEDS_INTERFACE not set: using the baseline $need."
+            }
+            else {
+              if ($null -eq $hdrVer) { throw "Could not find PLUGIN_INTERFACE_VERSION in plugin_interface.h" }
+              $need = $hdrVer
+              Write-Host "Plugin does not use PLUGIN_DECLARED_INTERFACE: using PLUGIN_INTERFACE_VERSION $need."
+            }
+            if ($need -lt $hdrMin -or $need -gt $hdrMax) {
+              throw "The plugin needs interface $need, outside the $hdrMin to $hdrMax this SDK supports. Set PLUGIN_NEEDS_INTERFACE to a number in that range."
+            }
+            return $need
+          }
+          # END plugin-interface-need
+
+          # The manifest declares [the interface level the plugin needs, the newest one
+          # the header knows]. A loader older than the minimum refuses the plugin, so
+          # its auto-updater must not replace a copy that works.
           $header   = Get-Content "$ws\plugin-sdk\include\plugin_interface.h" -Raw
-          $matchOwn = [regex]::Match($header, '#define\s+PLUGIN_INTERFACE_VERSION\s+(\d+)')
           $matchMax = [regex]::Match($header, '#define\s+PLUGIN_INTERFACE_VERSION_MAX\s+(\d+)')
-          if (-not $matchOwn.Success) { throw "Could not find PLUGIN_INTERFACE_VERSION in plugin_interface.h" }
           if (-not $matchMax.Success) { throw "Could not find PLUGIN_INTERFACE_VERSION_MAX in plugin_interface.h" }
-          $ifaceMin = [int]$matchOwn.Groups[1].Value
+          $ifaceMin = Get-PluginInterfaceNeed -PluginRoot $ws -HeaderText $header
           $ifaceMax = [int]$matchMax.Groups[1].Value
           Write-Host "Interface version range: [$ifaceMin, $ifaceMax]"
 
