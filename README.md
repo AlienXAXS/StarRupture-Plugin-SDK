@@ -224,4 +224,41 @@ The plugin is built on the newest SDK but declares 77, so it loads on ModLoader 
 | 79 | v1.27.0 |
 | 80 | not released yet |
 
+### A newer member only when the loader has it
+
+A plugin that needs 73 can still use a member added later, such as `IPluginHooks::Registry` (80), on a loader that has it. Say so with a second define, and the loader says which level it has.
+
+1. Keep `PLUGIN_NEEDS_INTERFACE` at the oldest loader the plugin runs on, and set `PLUGIN_OPTIONAL_INTERFACE` (every configuration, same value in every file) to the newest level it may use. Unset, it is the need.
+2. Put `PLUGIN_EXPORT_HOST_INFO()` once in one `.cpp` file of the plugin. It exports `PluginSetHostInfo`, which a loader with interface 80 calls once before `PluginInit` with its own level.
+3. Reach the member through its accessor, not through the raw table, and handle `nullptr`:
+
+```xml
+<PreprocessorDefinitions>PLUGIN_NEEDS_INTERFACE=73;PLUGIN_OPTIONAL_INTERFACE=80;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+```
+
+```cpp
+PLUGIN_EXPORT_HOST_INFO()
+
+void MyTick(const IPluginSelf* self)
+{
+    if (IPluginRegistry* reg = PluginOptRegistry(self->hooks))
+    {
+        // the loader is 80 or newer: use *reg
+    }
+    // otherwise the loader is older: this feature is off, the rest of the plugin works
+}
+```
+
+The plugin declares 73, so it loads on every loader from 73 up. A loader below 80 never calls the export, so `PluginHostLevel()` stays at 73, every accessor returns `nullptr` and the feature is simply off. `PluginHostHas(n)` asks whether the loader has level `n`.
+
+| Accessor | Member | Level |
+|---|---|---|
+| `PluginOptImages(hooks)` | `IPluginHooks::Images` | 77 |
+| `PluginOptDL_AddTexturedTriangles(imgui)` | `IModLoaderImGui::DL_AddTexturedTriangles` | 78 |
+| `PluginOptHostRules(hooks)` | `IPluginHooks::HostRules` | 79 |
+| `PluginOptRegistry(hooks)` | `IPluginHooks::Registry` | 80 |
+| `PluginOptServerAddress(network)` | `IPluginNetworkChannel::GetServerAddress` | 80 |
+
+An accessor exists only when `PLUGIN_OPTIONAL_INTERFACE` is at least its level, so naming one you did not ask for is a compile error. The raw member stays hidden below the need, as in the section above.
+
 The SDK repo is updated alongside each modloader release.
