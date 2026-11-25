@@ -66,8 +66,8 @@ enum GoToResult : int32_t
 {
 	GOTO_OK                 = 0,
 	GOTO_ALREADY_TRACKED    = 1,   // success: nothing changed
-	GOTO_UNKNOWN_ITEM       = -1,  // name not a known item
-	GOTO_NO_LOCATION_YET    = -2,  // item known, no producing base known this session
+	GOTO_UNKNOWN_ITEM       = -1,  // name not a known item (empty, or not in the item catalog)
+	GOTO_NO_LOCATION_YET    = -2,  // item known, no producing base known yet (CanTrack only; TrackItem accepts it)
 	GOTO_FEATURE_OFF        = -3,  // the version map group for lookup is off on this game build
 	GOTO_TRACKED_LIMIT      = -4,  // GOTOITEM_MAX_TRACKED_ITEMS reached (untrack one first)
 	GOTO_NOT_TRACKED        = -5,
@@ -144,13 +144,19 @@ struct GoToItemApi
 	// it moved (no per-frame copying, no file I/O).
 	uint32_t (*GetChangeCounter)();
 
-	// --- can this item be located? (draw / grey the Go button) --------------
-	// GOTO_OK when at least one source is known now; otherwise the reason.
+	// --- can this item be located? (the Go button's look and tooltip) -------
+	// GOTO_OK when at least one source is known now; otherwise the reason
+	// (GOTO_NO_LOCATION_YET while no producing base is known). Only for how the
+	// button looks: TrackItem does not require it.
 	int32_t (*CanTrack)(const char* itemKey);
 
 	// --- tracked set ----------------------------------------------------------
-	// Add an item to the set. All its sources are marked on the full map and
-	// pinned on screen. New items default to "nearest source" mode.
+	// Add an item to the set. Any known item is accepted, also one with no source
+	// yet (after a game load nothing is known until the factories finish a craft
+	// cycle): it waits in the set, and its pins and map marks appear once a
+	// source is known. All its sources are marked on the full map and pinned on
+	// screen. New items default to "nearest source" mode. GOTO_UNKNOWN_ITEM for
+	// an empty key or, once the item catalog is loaded, a key not in it.
 	int32_t (*TrackItem)(const char* itemKey);
 	// Remove one item (its map marks and screen pins disappear). Result
 	// GOTO_NOT_TRACKED if it was not tracked.
@@ -181,11 +187,13 @@ struct GoToItemApi
 	// The item's circle colour, 0xAARRGGBB opaque. Stable per item: derived
 	// from a hash of the key, skipping colours another tracked item holds, so
 	// the same item gets the same colour whenever the set allows. 0 when the
-	// item is not tracked.
+	// item is not tracked and has no override.
 	uint32_t (*GetItemColor)(const char* itemKey);
-	// Optional user override (a colour pick in a settings page); rgba == 0
-	// clears it. Persisting it is the implementation's job (written on change,
-	// never per frame).
+	// Optional user override (a colour pick in a settings page), stored per item
+	// key independent of tracking: it is kept when the item is untracked and
+	// applies again when it is tracked again. Only rgba == 0 clears it. Works for
+	// an untracked item too; GOTO_UNKNOWN_ITEM as for TrackItem. Persisting it is
+	// the implementation's job (written on change, never per frame).
 	int32_t  (*SetItemColor)(const char* itemKey, uint32_t colorRgba);
 
 	// --- text ------------------------------------------------------------------
