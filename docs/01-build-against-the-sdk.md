@@ -4,7 +4,7 @@ This page takes you from nothing to a plugin DLL that the loader accepts. You ne
 
 ## Steps
 
-1. Download `dwmapi.dll` from the [latest release](../../../releases/latest). It is the loader itself. Pick the Client or the Server file to match what you target. Put it in the game's `Binaries\Win64\` folder.
+1. Download `dwmapi-Client.dll` (or `dwmapi-Server.dll`, for a server plugin) from the [latest release](../../../releases/latest). It is the loader itself. Rename it `dwmapi.dll` and put it in the game's `Binaries\Win64\` folder, next to `StarRuptureGameSteam-Win64-Shipping.exe`. On Steam that is usually `steamapps\common\StarRupture\StarRupture\Binaries\Win64`.
 2. Clone this SDK next to your plugin, with its submodule:
 
    ```
@@ -22,8 +22,8 @@ This page takes you from nothing to a plugin DLL that the loader accepts. You ne
    ```
 
    `main` moves only when the loader is released, so it is also safe. Do not use other branches: they can carry an interface version that no released loader accepts.
-4. Point your project at the SDK. A plugin in its own repo finds the SDK as the sibling folder, so there is nothing to set. To use another location, pass `/p:PluginSDKInclude=<path to include>` and `/p:GameSDKRoot=<path to StarRupture SDK>` to MSBuild.
-5. In your plugin's `Shared.props`, import `PluginGameBuild.props` after those paths are set. It reads the game build of the headers you compile against (the `build_cl.txt` in the `StarRupture SDK` folder) and defines `PLUGIN_GAME_BUILT_CL`:
+4. Point your project at the SDK. A plugin in its own repo finds the SDK as the sibling folder, so there is nothing to set, as long as your repo has a `Shared.props` with those defaults. Copy one from a plugin that has it, for example ConfirmHotkey's. To use another location, pass `/p:PluginSDKInclude=<path to include>` and `/p:GameSDKRoot=<path to StarRupture SDK>` to MSBuild.
+5. In your plugin's `Shared.props`, import `PluginGameBuild.props` after those paths are set. ExamplePlugin already does this, because it uses this SDK's own `Shared.props`, so skip this step if you start from it inside the SDK solution. The file reads the game build of the headers you compile against (the `build_cl.txt` in the `StarRupture SDK` folder) and defines `PLUGIN_GAME_BUILT_CL`:
 
    ```xml
    <Import Project="$(PluginSDKInclude)\..\PluginGameBuild.props"
@@ -49,7 +49,7 @@ Every plugin declares an interface version in `PluginInfo`: use `PLUGIN_INTERFAC
 
 ## How the loader loads it
 
-The loader finds the DLL in the game's `Plugins` folder and calls its exports in this order:
+The loader finds the DLL in the game's `Binaries\Win64\ModLoader\Plugins` folder and calls its exports in this order:
 
 1. `GetPluginInfo` returns the name, version, author, interface version and target (client or server).
 2. `OnPluginLoadHooks` is optional. It is the only place a plugin asks for game addresses and offsets. Page 2 covers it.
@@ -63,7 +63,7 @@ The loader finds the DLL in the game's `Plugins` folder and calls its exports in
 1. Copy the folder, rename it, and change the project name and GUID in `ExamplePlugin.vcxproj`.
 2. Add the project to `StarRupture-Plugin-SDK.sln`, or to your own `.sln` that imports the same `Shared.props`.
 3. Build `Client Release`. The DLL is written to `bin\x64\Client Release\plugins\`.
-4. Copy the DLL to the game's `Binaries\Win64\Plugins\` folder.
+4. Copy the DLL to the game's `Binaries\Win64\ModLoader\Plugins\` folder.
 
 ExamplePlugin runs only on the game build it was compiled for. Page 2 shows what to change so it runs on every current build.
 
@@ -71,6 +71,6 @@ ExamplePlugin runs only on the game build it was compiled for. Page 2 shows what
 
 1. Start the game and open the loader's overlay. The Plugins tab lists your plugin as Loaded, or says why not (Incompatible, needs a newer ModLoader, a key that did not resolve).
 2. Read `ModLoader\Logs\ModLoader.log` for the lines about your plugin.
-3. After a rebuild, install the new DLL and press RELOAD in the overlay instead of restarting the game. A plugin can ask for a restart in its `PluginInfo` (the `mapFlags` reload settings); then the overlay says so.
+3. After a rebuild, install the new DLL and press RELOAD in the overlay instead of restarting the game. A plugin can ask for a restart in its `PluginInfo`; then the overlay says so. [PluginDevelopment.md](../PluginDevelopment.md) lists those settings.
 
 Before you ask anyone for help, include that log.

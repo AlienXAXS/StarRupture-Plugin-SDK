@@ -42,10 +42,10 @@ It prints the offset, size and bool mask of every key, and which keys it could n
 
 ## Check it on every current build
 
-A row that works on one build and not on the others breaks the plugin on the others. The current builds are CL 127004, 128786, 129402 and 130045. Two of them can be live at once, because Steam's public and test branches can run different builds. Keep the exe of each build.
+A row that works on one build and not on the others breaks the plugin on the others. The current builds are CL 127004, 128786, 129402 and 130045. Two of them can be live at once. Keep the exe of each build.
 
 1. Members and sizes: run the `--layout` command above on each build's exe. Check that the numbers you want to send are right on every build, and that the bool mask is the same.
-2. Functions: `sr-aobscan` can rescan a pattern on another build. Put your row for one build into a copy of the loader's `hooks/game/version_map.generated.h`, then run, for each other build:
+2. Functions: `sr-aobscan` can rescan a pattern on another build. Put your row for one build into a copy of the loader's own file, `StarRupture-ModLoader-Core/hooks/game/version_map.generated.h` in the [ModLoader repository](https://github.com/AlienXAXS/StarRupture-ModLoader). It is not a plugin header. Then run, for each other build:
 
    ```
    sr-aobscan-client.exe <exe of that build> --carry --map <the copy> --cl <that build's CL>
@@ -65,7 +65,7 @@ A function, on one build (hex values start with `0x`):
 node ci/version-map.mjs add-function version_map.generated.h --key <key> --cl <CL> --rva <hex> --pattern "<bytes>" --kind 1
 ```
 
-`--kind 1` is a function start. A global is `--kind 4`. A key with a `/` in it is a spot inside a function; those carry another kind and an `--fp`, and we fill those in when we write the row. If the row has no pattern and only the RVA, use `--rva-only` instead of `--pattern`. The loader accepts such a row only on that exact exe.
+Run these on a copy of the loader's `version_map.generated.h`, the file named in "Check it". `--kind` only fits that file. `--kind 1` is a function start. A global is `--kind 4`. A key with a `/` in it is a spot inside a function; those carry another kind and an `--fp`, and we fill those in when we write the row. If the row has no pattern and only the RVA, use `--rva-only` instead of `--pattern`. The loader accepts such a row only on that exact exe.
 
 If the pattern's address is a call you follow, add `--follow-rel32-at <n>`, the offset of the `E8` or `E9`.
 

@@ -6,13 +6,13 @@ The loader keeps the answers in its version object map, called the version map (
 
 ## What "multi-version" means
 
-A multi-version plugin is one DLL that loads on every current game build. Two builds can be live at once, the public one and the test branch, so a plugin that is not multi-version breaks for part of the players. The current builds are CL 127004, 128786, 129402 and 130045.
+A multi-version plugin is one DLL that loads on every current game build. Two game builds can be live at once, so a plugin that is not multi-version breaks for part of the players. The current builds are CL 127004, 128786, 129402 and 130045.
 
 A plugin is multi-version when it reads every per-build value from the loader. It then says so with `PLUGIN_MAP_MIGRATED`.
 
 ## What `PLUGIN_MAP_MIGRATED` promises
 
-Put `PLUGIN_GAME_BUILT_CL` and `PLUGIN_MAP_MIGRATED` in `PluginInfo`:
+Put `PLUGIN_GAME_BUILT_CL` and `PLUGIN_MAP_MIGRATED` in `PluginInfo`. ExamplePlugin leaves the target, game build and flag at their defaults, so add them:
 
 ```cpp
 static PluginInfo s_pluginInfo = {
@@ -28,7 +28,11 @@ The flag promises that the plugin reads no game function address, member offset 
 - On any other build it knows, it loads only a plugin with the flag. Without it, the Plugins tab shows "Incompatible: needs an update to run on CL-...", and the plugin still loads on its own build.
 - A plugin with the flag and no game build (`PLUGIN_GAME_BUILT_CL` is 0) is refused on every build.
 
-The SDK's `tools/rule3-check.mjs` scans your sources for direct reads of game members, which is the usual way a promise gets broken. Run it before you set the flag.
+The SDK's `tools/rule3-check.mjs` scans your sources for direct reads of game members, which is the usual way a promise gets broken. Run it before you set the flag. It needs Node.js:
+
+```
+node tools/rule3-check.mjs --plugin MyPlugin --sdk "StarRupture SDK\Client\SDK" --source MyPlugin
+```
 
 ## The calls
 
@@ -41,7 +45,7 @@ Include `plugin_map.h` after `plugin_interface.h` and the game headers. Ask for 
 | An address inside a function of your own | `PluginMap::Site(...)`; it needs a pattern of its own, and a row only after we add it |
 | A member's offset | `SR_FIELD(Type, Class, Member, 0)`, read with `.In(object)` |
 | A bool bitfield member | `SR_BITFIELD(Class, Member)`, read with `.Get(object)` and `.Set(object, value)` |
-| A struct's size | `SR_SIZE(Class)` (live size, for stepping through an array) or `SR_SIZE_CHECK(Class)` (the plugin turns off if the size changed, for a struct you copy) |
+| A struct's size | `SR_SIZE(Class)` (live size, for stepping through an array) or `SR_SIZE_CHECK(Class)` (a changed size refuses the plugin, or turns off only its feature if the key is in a feature, for a struct you copy) |
 | A member whose size differs between builds | `SR_FIELD_ANY_SIZE`, then read `resolvedSize` |
 | A function parameter | `SR_PARAM(Class, Function, Param)` and `SR_PARAMS_SIZE(Class, Function)`, used with `PluginMap::ParamsBlockOf` |
 
@@ -49,7 +53,7 @@ Then `PluginMap::ResolveFields(scanner, self, field1, field2, ...)` asks for all
 
 1. Never write `object->Member` for a game member. Write `field.In(object)`. The first reads the offset of the build you compiled on.
 2. Call `PluginSdkRuntime::Init(self->hooks)` as the first statement of `PluginInit`, and use `PluginSdkRuntime::GetWorld()` in place of `SDK::UWorld::GetWorld()`.
-3. A key that cannot be resolved refuses the plugin. To lose only one part of it, group the keys that part needs in a `PluginMap::Feature` and declare it with `PluginMap::DeclareFeatures` before the calls. A miss then turns that feature off and the plugin still loads.
+3. A key that cannot be resolved refuses the plugin. To lose only one part of it, group the keys that part needs in a `PluginMap::Feature` and declare it with `PluginMap::DeclareFeatures` before the calls. A miss then turns that feature off and the plugin still loads. The form is `static PluginMap::Feature s_x{ "id", "Title a player reads", { "Key", ... }, { "Settings.*" } };`. `s_example` in `ExamplePlugin/plugin.cpp` is a working one.
 
 Most members are reflected, so the loader reads their offset from the running game and a row is only a cross-check. A member that reflection does not describe (a plain C++ type) is called native. It needs a row for every build, and the flag `PLUGIN_FIELD_NATIVE`.
 
@@ -63,7 +67,7 @@ The loader refuses a plugin for version reasons only when the plugin cannot run 
 
 ## Worked example: ConfirmHotkey
 
-ConfirmHotkey reads one member of a game widget. Its declaration, in `ModCore.cpp`:
+ConfirmHotkey reads one member of a game widget. These lines are from the `gss/plugin-work` branch of [msantoro12/StarRupture-Plugin-ConfirmHotkey](https://github.com/msantoro12/StarRupture-Plugin-ConfirmHotkey); the upstream `main` does not read its members through the version map yet. Its declaration, in `ModCore.cpp`:
 
 ```cpp
 static auto s_claimButton = SR_FIELD(decltype(SDK::UCrUW_Analyzer::ClaimButton), UCrUW_Analyzer, ClaimButton, 0);

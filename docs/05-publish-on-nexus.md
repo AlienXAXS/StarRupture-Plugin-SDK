@@ -16,8 +16,8 @@ Copy `templates/release.yml` from this repository to `.github/workflows/release.
 
 A run makes:
 
-- a version tag, generated from the last one,
-- `<PluginName>-Client-vX.Y.Z.zip` with the DLL and its sidecar JSON, and `<PluginName>-client-manifest.json`, the update manifest,
+- a version tag. The first release is `v0.1.0` and each one raises the minor number. To choose a version, put it in a file named `version` at the repo root; it wins when it is higher,
+- `<PluginName>-Client-vX.Y.Z.zip` with the DLL and its sidecar JSON, `<PluginName>-client-manifest.json`, the update manifest, and `<PluginName>-Client.dll`, the bare DLL (the file Browse installs, page 4),
 - the same for the Server variant, if you set `server_build: true`,
 - a GitHub release with all of them.
 
@@ -26,9 +26,9 @@ The release notes come from `UPDATE_NOTES.txt` in the repo root, one change per 
 ## Set up the Nexus upload
 
 1. Make your Nexus page on nexusmods.com.
-2. Put the page's global (v3 API) mod id in `nexus_mod_id` in your `release.yml`. Without it the workflow skips Nexus.
-3. Add these secrets to your repo: `NEXUS_APIKEY` (your Nexus API key), `NEXUS_CLIENT_GROUP_ID`, and with `server_build` also `NEXUS_SERVER_GROUP_ID`. They are the ids of the file groups on your page.
-4. Run the workflow. For each upload, it sets the page's Version field, the changelog and the description.
+2. Put the page's global (v3 API) mod id in `nexus_mod_id` in your `release.yml`. It is not the number in the page's address. It is the `id` that `https://api.nexusmods.com/v3/games/starrupture/mods/<number in your page address>` returns. Without it the workflow skips Nexus.
+3. Add these secrets to your repo: `NEXUS_APIKEY` (your Nexus API key), `NEXUS_CLIENT_GROUP_ID`, and with `server_build` also `NEXUS_SERVER_GROUP_ID`. They are the ids of the file groups on your page, which the workflow adds each new version to. If you cannot find them, leave Nexus out of the workflow and upload by hand (checklist 4). This step is optional.
+4. Run the workflow. The Client upload sets the page's Version field, the changelog and the description. The Server upload only adds the file.
 
 ## What the Nexus page needs
 
@@ -101,7 +101,7 @@ Stops a StarRupture dedicated server from sleeping when no players are online. W
 
 Original mod by [url=https://github.com/AlienXAXS]@AlienXAXS[/url]
 
-Maintained by [url=https://github.com/msantoro12]@msantoro12[/url], creator of [url=https://starrupture.goodstuff.software]StarRupture Planner[/url]
+Maintained by [url=https://github.com/your-handle]@your-handle[/url]
 ```
 
 The order is the one in "What the Nexus page needs": title and tagline, side, bug report, install, credits. When the release ships, this file replaces `description.bbcode`.

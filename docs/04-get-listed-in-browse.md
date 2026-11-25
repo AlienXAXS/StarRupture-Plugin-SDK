@@ -12,7 +12,7 @@ One entry is one JSON object. These are all the fields the loader reads.
 |---|---|---|
 | `id` | yes | Short, lowercase, up to 64 characters. Other mods use it in `requires`. |
 | `name` | yes | The name on the card, up to 64 characters. |
-| `page_url` | yes | Where **Open page** goes. `https://` on `github.com` or `nexusmods.com`, up to 200 characters, no port and no user name. |
+| `page_url` | yes | Where **Open page** goes. `https://` on `github.com` or `nexusmods.com`, up to 200 characters, no port and no user name. To use Install, it must be your GitHub repository, `https://github.com/<owner>/<repo>`. A Nexus link is accepted only for an entry with no download, and the entry has no other field for one: link your Nexus page from your README. |
 | `author` | no | Up to 64 characters. Players can search it. |
 | `version` | no | Your latest release, up to 32 characters. |
 | `summary` | no | One or two sentences, up to 300 characters. Players search it, so use the words they would type. |
@@ -28,10 +28,10 @@ Without the download fields the card still shows, with **Open page** and no **In
 
 ### The download
 
-1. `download_url` is the `.dll` you attached to a GitHub release: `https://github.com/<owner>/<repo>/releases/download/<tag>/<file>.dll`. It must be in the same repository as `page_url`. No other site works, and not a branch link or a zip. The loader follows GitHub's own redirect to `release-assets.githubusercontent.com` or `objects.githubusercontent.com` and to nothing else.
+1. `download_url` is the `.dll` you attached to a GitHub release: `https://github.com/<owner>/<repo>/releases/download/<tag>/<file>.dll`. It must be in the same GitHub repository as `page_url`. No other site works, and not a branch link or a zip. The loader follows GitHub's own redirect to `release-assets.githubusercontent.com` or `objects.githubusercontent.com` and to nothing else.
 2. `download_sha256` is the SHA-256 of that file: 64 lowercase hex characters.
 3. `download_size` is its size in bytes, a whole number from 1 to 33554432 (32 MB), written as plain digits (`2e6` is refused).
-4. `install_files` is the name the DLL gets in `ModLoader\Plugins`, as a list. It has exactly one `.dll`, made of letters, digits, `_`, `.` and `-`, up to 80 characters. It can differ from the asset name. A name ending `-Server.dll` is not installed. Install never replaces a file that is already there.
+4. `install_files` is the name the DLL gets in `ModLoader\Plugins`, as a list. It has exactly one `.dll`, made of letters, digits, `_`, `.` and `-`, up to 80 characters. It can differ from the asset name. An entry whose name ends `-Server.dll` is refused. Install never replaces a file that is already there.
 
 To keep a plugin current by itself, also list its `.json` beside the DLL, for example `["MyMod.dll", "MyMod.json"]`, and add `update_manifest_url`: `https://github.com/<owner>/<repo>/releases/latest/download/<name>-client-manifest.json`, in the same repository. The `.json` and `update_manifest_url` go together, both or neither.
 
@@ -86,7 +86,7 @@ This is the entry for ConfirmHotkey, the plugin from page 2. It is taken from `m
 
 ## Send it to us
 
-1. Make the GitHub release first, with the `.dll` attached as its own file.
+1. Make the GitHub release first, with the `.dll` attached as its own file. The release workflow on page 5 attaches it as `<PluginName>-Client.dll`. The asset name follows the same rule as the install name: letters, digits, `_`, `.` and `-`, up to 80 characters.
 2. Work out the SHA-256 and the size, as above.
 3. Write your entry.
 4. Open an issue on this repository with the entry and a link to the release.
@@ -94,7 +94,7 @@ This is the entry for ConfirmHotkey, the plugin from page 2. It is taken from `m
 
 We refuse an entry that has any of these: a `download_url` that is not a release asset of the `page_url` repository, a `download_sha256` that is not 64 lowercase hex characters, a size out of range, an install field written twice or nested inside another value, or a `server_only` entry with a download. The list is at most 200 entries and 256 KB.
 
-To see **Install** work before your entry is in the list, point your own copy of the loader at your file. In `ModLoader\modloader.ini`:
+To see **Install** work before your entry is in the list, point your own copy of the loader at your file. It is a JSON array of entries, one per mod, with LF line endings and a newline at the end. In `ModLoader\modloader.ini`:
 
 ```
 [AutoUpdate]
