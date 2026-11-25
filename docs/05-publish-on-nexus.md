@@ -2,6 +2,8 @@
 
 Most players find a mod on Nexus Mods. This page is for when your plugin has a released version on GitHub and you want it on a Nexus page. The order never changes: the GitHub release comes first, Nexus second.
 
+The Nexus page is yours. You make it, you write its text and you keep it up to date. We do not run it for you.
+
 ## How the two fit together
 
 - The GitHub release is the source of the files. Its ZIP is the file players download from Nexus too, so both carry the same version number.
@@ -23,14 +25,14 @@ The release notes come from `UPDATE_NOTES.txt` in the repo root, one change per 
 
 ## Set up the Nexus upload
 
-1. Make the Nexus page by hand once. The workflow updates a page. It does not create one.
+1. Make your Nexus page on nexusmods.com.
 2. Put the page's global (v3 API) mod id in `nexus_mod_id` in your `release.yml`. Without it the workflow skips Nexus.
 3. Add these secrets to your repo: `NEXUS_APIKEY` (your Nexus API key), `NEXUS_CLIENT_GROUP_ID`, and with `server_build` also `NEXUS_SERVER_GROUP_ID`. They are the ids of the file groups on your page.
 4. Run the workflow. For each upload, it sets the page's Version field, the changelog and the description.
 
 ## What the Nexus page needs
 
-The description is BBCode. Keep it in your repo as `nexus/description.bbcode`. If that file exists, the workflow replaces the page description with it on every upload. A page has these parts, in this order:
+The description is BBCode. The workflow's `nexus_description_file` input names the file it uploads as the page description (default `nexus/description.bbcode`); when that file exists, it replaces the page description on every upload. A page has these parts, in this order:
 
 1. A title line, and one or two sentences on what the mod does.
 2. Whether it is client side, server side or both.
@@ -44,38 +46,33 @@ Credits go in one section at the bottom of the page and of your README. Name the
 
 ## Text for the next release
 
-The page must describe the version that is out, not the one you are working on. Keep two files:
+The page must describe the version that is out, not the one you are working on. A habit that works: keep two texts.
 
-- `nexus/description.bbcode` is the text of the released version. The workflow uploads it.
-- `nexus/description-next.bbcode` is the text for the version you are building. Write new features in it as you add them. The workflow never reads it.
+- `description.bbcode` is the text of the released version. This is the file the workflow uploads.
+- `description-next.bbcode` is the text for the version you are building. Write new features in it as you add them. The workflow never reads it, and where you keep it is up to you.
 
-When the GitHub release ships, copy `description-next.bbcode` over `description.bbcode` in the same commit that you release from. Do not edit `description.bbcode` before then.
+When the GitHub release ships, copy `description-next.bbcode` over `description.bbcode`. Do not edit `description.bbcode` before then.
 
 ## The main image
 
-The main image (the thumbnail at the top of the Nexus page) is not part of the release and the workflow cannot set it. It is uploaded by hand on the Nexus page, by the person who owns the page, and the Nexus API cannot read or change it. The gallery is the same.
-
-1. If you own the page, upload the main image and the gallery shots in your browser.
-2. If your mod is on a page we run, send the image files with the release and say which is the main image. We upload them.
-3. Use the same screenshots on GitHub and on Nexus, so the Browse card, the release and the page match.
+The main image (the thumbnail at the top of the Nexus page) is not part of the release and the workflow cannot set it. You upload it by hand on your Nexus page, and so the gallery. The Nexus API cannot read or change either. Use the same screenshots on GitHub and on Nexus, so the Browse card, the release and the page match.
 
 ## What you do and what you ask us for
 
 You do:
 
 - the GitHub release, with `UPDATE_NOTES.txt`,
-- the text in `nexus/description.bbcode` and `description-next.bbcode`,
+- your Nexus page and its text,
 - the upload to your own Nexus page, with your own secrets.
 
 Ask us on an issue in this repository for:
 
 - version map rows your plugin needs (page 3),
-- a Browse entry (page 4),
-- anything about a page we run.
+- a Browse entry (page 4).
 
 ## Worked example: the next-release text for KeepTicking
 
-KeepTicking is a server plugin. This is the shape of its `nexus/description-next.bbcode`, cut down to the parts every page has:
+KeepTicking is a server plugin. This is the shape of its `description-next.bbcode`, cut down to the parts every page has:
 
 ```
 [size=6][b]KeepTicking — Keep Your Dedicated Server Running for StarRupture[/b][/size]
@@ -113,6 +110,6 @@ The order is the one in "What the Nexus page needs": title and tagline, side, bu
 
 1. The version is already a GitHub release.
 2. `UPDATE_NOTES.txt` lists the changes, one per line.
-3. `nexus/description.bbcode` matches the released version.
+3. The description text matches the released version.
 4. `nexus_mod_id` and the three secrets are set, or you upload by hand.
-5. The main image and the gallery are on the page.
+5. The main image and the gallery are on your page.
