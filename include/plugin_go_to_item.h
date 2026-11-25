@@ -180,7 +180,10 @@ struct GoToItemApi
 	// --- nearest + picker -----------------------------------------------------
 	// sourceKey == 0 returns the item to "nearest" mode. A non-zero key pins the
 	// primary target to that source; every source is still marked on the map.
-	// GOTO_UNKNOWN_SOURCE if the key is not in the item's list.
+	// GOTO_UNKNOWN_SOURCE if the key is not in the item's list. The exception is
+	// a remote client (a joined game), whose list comes from the server and may
+	// not have arrived yet: a key not listed yet is accepted (GOTO_OK), held, and
+	// picked once its source appears; until then the item shows its nearest.
 	int32_t (*SelectSource)(const char* itemKey, uint64_t sourceKey);
 
 	// --- colour ----------------------------------------------------------------
