@@ -11,7 +11,8 @@
 //   Fill PluginInfo::interfaceVersion with PLUGIN_DECLARED_INTERFACE. A loader older than that refuses the plugin.
 //   Members added after your level are not declared: using one is a compile error (the compiler says the member does not exist; the comment beside the member gives the level to raise to).
 //   Raise it only when the compiler tells you to. The loader itself builds with PLUGIN_INTERFACE_HOST_BUILD and sees all.
-//   Only members are hidden. Flags and constants are not: PLUGIN_FIELD_ANY_SIZE and PluginCond_* came in at 74,
+//   Members are hidden, and so are PluginReload, PLUGIN_RELOAD_* and the PluginLoadSetting and
+//   PluginUnloadSetting helpers below 73. Other flags and constants are not: PLUGIN_FIELD_ANY_SIZE and PluginCond_* came in at 74,
 //   PLUGIN_FIELD_LATE and PluginWindowFlags_MenuMouseWhereUncovered at 75. Use one only when your need covers its
 //   level; an older loader refuses the request or ignores the flag, and the feature stays off.
 //

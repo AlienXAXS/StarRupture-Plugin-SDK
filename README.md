@@ -196,7 +196,7 @@ Your plugin declares the interface level it needs. A ModLoader refuses a plugin 
 
 1. Set `PLUGIN_NEEDS_INTERFACE` in your project's preprocessor definitions (every configuration) to the lowest level your plugin uses. Unset, it is 75.
 2. Fill `PluginInfo` with `PLUGIN_DECLARED_INTERFACE`, not a number.
-3. Raise the level only when the compiler tells you to. An error such as `'Images': is not a member of 'IPluginHooks'` means that member needs a newer ModLoader; the comment on it in `plugin_interface.h` names the level. Only members are hidden: flags and constants are not (`PLUGIN_FIELD_ANY_SIZE` and `PluginCond_*` came in at 74, `PLUGIN_FIELD_LATE` and `PluginWindowFlags_MenuMouseWhereUncovered` at 75), so use one only when your level covers it. An older loader refuses the request or ignores the flag, and that feature stays off.
+3. Raise the level only when the compiler tells you to. An error such as `'Images': is not a member of 'IPluginHooks'` means that member needs a newer ModLoader; the comment on it in `plugin_interface.h` names the level. Members are hidden, and so are `PluginReload`, `PLUGIN_RELOAD_*`, `PluginLoadSetting` and `PluginUnloadSetting` below 73. Other flags and constants are not (`PLUGIN_FIELD_ANY_SIZE` and `PluginCond_*` came in at 74, `PLUGIN_FIELD_LATE` and `PluginWindowFlags_MenuMouseWhereUncovered` at 75), so use one only when your level covers it. An older loader refuses the request or ignores the flag, and that feature stays off.
 
 Use the same value in every file you build into the plugin. Two values in one DLL are a link error (`LNK2038`, `PluginNeedsInterface`).
 

@@ -1018,7 +1018,7 @@ struct PluginMapFeature
     // thread), so read On() where the feature acts, never a copy. A plugin that
     // wrote or changed something while it was on puts it back when On() turns
     // false. The loader writes `on` on the game thread; On() reads it with
-    // std::atomic_ref, so it is safe to call from a render callback too.
+    // std::atomic_ref, so the read cannot tear.
     bool on = true;
     bool On() const
     {
