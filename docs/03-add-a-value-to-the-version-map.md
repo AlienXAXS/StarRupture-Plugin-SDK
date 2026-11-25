@@ -16,10 +16,10 @@ Keys are named like this:
 
 | What | Key | Example |
 |---|---|---|
-| A game function or global | `Class::Function` or the global's name | `FMassEntityQuery::ForEachEntityChunk` |
-| A spot inside a function | `<your PluginInfo name>/<hookName>` | `MiniMap/UStreamableRenderAsset::HasPendingInitOrStreaming` |
+| A game function or global | `Class::Function` or the global's name | `AActor::BeginPlay` |
+| A spot inside a function | `<your PluginInfo name>/<hookName>` | `MyPlugin/MyHook` |
 | A member | `Class::Member` | `UTexture::SRGB` |
-| A struct size | `Class` | `FMassEntityQuery` |
+| A struct size | `Class` | `FMyStruct` |
 
 Use the Dumper-7 spelling for class and member names, the same as in the SDK headers.
 
@@ -96,38 +96,53 @@ We check the values, add the rows to the loader's version map and publish them. 
 
 We will offer worked examples if you want to move an existing plugin over, but you do not have to do that port on your own before asking for rows.
 
-## Worked example: FMassEntityQuery::ForEachEntityChunk
+## Worked example: AActor::BeginPlay
 
-A plugin needed to call `FMassEntityQuery::ForEachEntityChunk`, a game function, and no key existed for it. This is how that went.
+`AActor::BeginPlay` is a game function that a plugin may want to hook, and the loader's own version map has rows for it. You can open the file and compare every step below with the real rows: `StarRupture-ModLoader-Core/hooks/game/version_map.generated.h` in the [ModLoader repository](https://github.com/AlienXAXS/StarRupture-ModLoader), on `main`. Search it for `// AActor::BeginPlay`.
 
-1. The key. It is a game function, so `FMassEntityQuery::ForEachEntityChunk`, kind 1.
-2. The pattern. From the start of the function:
-
-   ```
-   4C 89 44 24 18 56 57 41 55 48 81 EC C0 00 00 00 48 8B 81 60 02 00 00 4D 8B E8 48 8B F2 48 8B F9 48 85 C0 74 ?? 48 3B 82 18 04 00 00 74 ?? 4C 8D 0D ?? ?? ?? ?? 41 B8 ED 00 00 00 48 8D 15 ?? ?? ?? ?? 48 8D 0D ?? ?? ?? ?? E8 ?? ?? ?? ?? 84 C0
-   ```
-
-3. The check. The same pattern matched exactly once on CL 129402 and on CL 130045, and the address it found was the named function in each build's PDB. The RVAs are different, as expected: `0x0445EAD0` on 129402 and `0x0445E450` on 130045.
-4. The rows:
+1. The key. It is a game function, so `AActor::BeginPlay`, kind 1.
+2. The pattern. The first bytes of the function, with `??` where a byte changes:
 
    ```
-   node ci/version-map.mjs add-function version_map.generated.h --key FMassEntityQuery::ForEachEntityChunk --cl 129402 --rva 0x0445EAD0 --pattern "<the pattern above>" --kind 1
-   node ci/version-map.mjs add-function version_map.generated.h --key FMassEntityQuery::ForEachEntityChunk --cl 130045 --rva 0x0445E450 --pattern "<the pattern above>" --kind 1
+   48 89 5C 24 ?? 48 89 74 24 ?? 57 48 81 EC ?? ?? ?? ?? 48 8B 05 ?? ?? ?? ?? 48 33 C4 48 89 84 24 ?? ?? ?? ?? 0F B6 41
    ```
 
-   In the header they read:
+   It is the same on all four current builds.
+3. The address. The function sits at a different RVA on each build:
+
+   | CL | RVA |
+   |---|---|
+   | 127004 | `0x0452B260` |
+   | 128786 | `0x04531830` |
+   | 129402 | `0x045315D0` |
+   | 130045 | `0x04530F50` |
+
+4. The check. Run the `--carry` command from the section above on the exe of each build other than the one you found the function in. A good pattern gives exactly one match there, at the RVA in the table. Then open that address in your disassembler on one build and confirm it is `AActor::BeginPlay`.
+5. The rows, one command per build:
 
    ```
-   // FMassEntityQuery::ForEachEntityChunk
-   { 129402, 0x6499F129, 0x0F482000, 1, 0x00000000, false, "<pattern>", 0, -1, -1, 0x0445EAD0, nullptr },
-   { 130045, 0xCCBFE20D, 0x0F47F000, 1, 0x00000000, false, "<pattern>", 0, -1, -1, 0x0445E450, nullptr },
+   node ci/version-map.mjs add-function version_map.generated.h --key AActor::BeginPlay --cl 127004 --rva 0x0452B260 --pattern "<the pattern above>" --kind 1
+   node ci/version-map.mjs add-function version_map.generated.h --key AActor::BeginPlay --cl 128786 --rva 0x04531830 --pattern "<the pattern above>" --kind 1
+   node ci/version-map.mjs add-function version_map.generated.h --key AActor::BeginPlay --cl 129402 --rva 0x045315D0 --pattern "<the pattern above>" --kind 1
+   node ci/version-map.mjs add-function version_map.generated.h --key AActor::BeginPlay --cl 130045 --rva 0x04530F50 --pattern "<the pattern above>" --kind 1
    ```
 
-   The image stamp and size (`0x6499F129`, `0x0F482000` and so on) are filled in from the build table, which is why the build must already be in it.
-5. The commit. The rows went in with seven other functions in one commit, `1087050e` ("Add map rows for payload handle and Mass calls", on the ModLoader repository's dev line). Its message says each pattern matches once and its target is the named function in that build's PDB, and that existing rows are unchanged.
-6. The plugin. It asks for the key by name, as on page 2, and no longer carries the pattern.
+   In the header the first one reads:
 
-That commit has rows for CL 129402 and 130045 only. A new set of rows should have all four builds, or a build with no row must be one where the function does not exist. The commit message does not say which it was for 127004 and 128786, so do not copy that part. Check every build.
+   ```
+   // AActor::BeginPlay
+   { 127004, 0xE8972298, 0x0F35C000, 1, 0x00000000, false, "<pattern>", 0, -1, -1, 0x0452B260, nullptr },
+   ```
+
+   The image stamp and size (`0xE8972298`, `0x0F35C000`) are filled in from the build table, so the build must already be in it.
+6. The plugin. It asks for the key by name, as on page 2, and carries no pattern and no address.
+
+A member row is shorter. `UTexture::SRGB` has the same row on all four builds, offset `0x106`, size 1, mask `0x01`:
+
+```
+// UTexture::SRGB
+{ 127004, 0x106, 0x1, 0x01, nullptr },
+```
 
 ## Checklist
 
