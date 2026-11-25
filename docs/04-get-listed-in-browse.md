@@ -19,7 +19,7 @@ One entry is one JSON object. These are all the fields the loader reads.
 | `readme_url` | no | A raw link to your README on `raw.githubusercontent.com`. The card gets a **README** button. |
 | `tested_loader` | no | The ModLoader version you tested on, for example `1.27.0`. |
 | `interface_version_min` | no | The plugin interface number your plugin declares. Leave it out if you don't know it. |
-| `requires` | no | The `id` of each mod yours needs, up to 8, for example `["minimap"]`. Install is refused until they are installed and enabled. The card does not list them, so say it in `summary` too. |
+| `requires` | no | The `id` of each mod yours needs, up to 8, for example `["minimap"]`. Install is refused until they are installed and enabled. |
 | `server_only` | no | `true` for a plugin that runs only on a dedicated server. It never installs on a player's PC. |
 | `download_url`, `download_sha256`, `download_size`, `install_files` | for Install | The download. Give all four or none. |
 | `update_manifest_url` | with the `.json` | See below. |
@@ -28,10 +28,10 @@ Without the download fields the card still shows, with **Open page** and no **In
 
 ### The download
 
-1. `download_url` is the `.dll` you attached to a GitHub release: `https://github.com/<owner>/<repo>/releases/download/<tag>/<file>.dll`. It must be in the same GitHub repository as `page_url`. No other site works, and not a branch link or a zip. The loader follows GitHub's own redirect to `release-assets.githubusercontent.com` or `objects.githubusercontent.com` and to nothing else.
+1. `download_url` is the `.dll` you attached to a GitHub release: `https://github.com/<owner>/<repo>/releases/download/<tag>/<file>.dll`. It must be in the repository your `page_url` names, which is why `page_url` has to be your GitHub repository (see the table above). No other site works, and not a branch link or a zip. The loader follows GitHub's own redirect to `release-assets.githubusercontent.com` or `objects.githubusercontent.com` and to nothing else.
 2. `download_sha256` is the SHA-256 of that file: 64 lowercase hex characters.
 3. `download_size` is its size in bytes, a whole number from 1 to 33554432 (32 MB), written as plain digits (`2e6` is refused).
-4. `install_files` is the name the DLL gets in `ModLoader\Plugins`, as a list. It has exactly one `.dll`, made of letters, digits, `_`, `.` and `-`, up to 80 characters. It can differ from the asset name. An entry whose name ends `-Server.dll` is refused. Install never replaces a file that is already there.
+4. `install_files` is the name the DLL gets in `ModLoader\Plugins`, as a list. It has exactly one `.dll`, made of letters, digits, `_`, `.` and `-`, up to 80 characters. It can differ from the asset name. A name that ends `-Server.dll` is refused. Install never replaces a file that is already there.
 
 To keep a plugin current by itself, also list its `.json` beside the DLL, for example `["MyMod.dll", "MyMod.json"]`, and add `update_manifest_url`: `https://github.com/<owner>/<repo>/releases/latest/download/<name>-client-manifest.json`, in the same repository. The `.json` and `update_manifest_url` go together, both or neither.
 
@@ -109,11 +109,10 @@ The card then shows "This list isn't signed. It comes from the address you set y
 - The list is not published yet: "The mod list isn't published yet."
 - The list server fails: "The mod list server answered with an error (HTTP 503)." (the number the server sent). **Retry** tries again.
 - The list is over the size limit: "The mod list is larger than allowed."
-- A mod that can't install shows a greyed **Install** and the reason under the card:
+- A mod that has a download but can't install shows a greyed **Install** and the reason under the card:
   - "Vortex manages this mod. Install it in Vortex."
   - "MyMod needs MiniMap. Install MiniMap first." (or "Enable MiniMap first.")
   - "Needs a newer ModLoader." when `interface_version_min` is higher than the loader knows.
-  - "This mod can't be installed from here. Open its page." for a `server_only` entry.
 - The downloaded file does not match the list: "The downloaded file does not match the mod list, so nothing was installed."
 
 Pictures are not needed yet. Browse shows a placeholder card for every mod.
