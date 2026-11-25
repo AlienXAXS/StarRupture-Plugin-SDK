@@ -260,7 +260,11 @@ jobs:
           # The interface level one variant of the plugin needs: what it sets as
           # PLUGIN_NEEDS_INTERFACE (a project-wide define in a vcxproj/props/targets file, a
           # CMake file, or a #define in its sources). An entry whose Condition names the
-          # other variant is not that variant's. Without one, a plugin that fills PluginInfo
+          # other variant is not that variant's. The filter sees only the Condition text on the
+          # entry and the groups around it: a word Client or Server (a configuration such as
+          # 'Server Release|x64', or '$(Configuration)'=='Server Release'). A Server-only entry
+          # under any other Condition, or none, counts for the Client too. A #define has no
+          # Condition, so it counts for both variants. With no entry at all, a plugin that fills PluginInfo
           # with PLUGIN_DECLARED_INTERFACE needs the header's PLUGIN_INTERFACE_BASELINE, and
           # an older plugin that still uses PLUGIN_INTERFACE_VERSION needs that number.
           function Get-PluginInterfaceNeed {
@@ -365,7 +369,7 @@ jobs:
             $debug   = @($hits | Where-Object { $_.Cfg -eq 'Debug' })
             if (@($release | ForEach-Object { [int]$_.Value } | Select-Object -Unique).Count -gt 1) {
               $list = ($release | ForEach-Object { "$($_.Where) = $($_.Value)" }) -join '; '
-              throw "PLUGIN_NEEDS_INTERFACE differs between configurations or files ($list). The $Variant Release build must set one number."
+              throw "PLUGIN_NEEDS_INTERFACE differs between configurations or files ($list). The $Variant Release build must set one number. To give the Client and the Server different numbers, set PLUGIN_NEEDS_INTERFACE in the project's PreprocessorDefinitions under a Condition naming Client or Server, not with #define."
             }
             foreach ($hit in $debug) {
               if ($release.Count -eq 0 -or [int]$hit.Value -ne [int]$release[0].Value) {
