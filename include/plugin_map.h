@@ -28,6 +28,7 @@
 //   PluginSdkRuntime::Init(self->hooks);
 // and PluginSdkRuntime::GetWorld() in place of SDK::UWorld::GetWorld().
 
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -1016,9 +1017,13 @@ struct PluginMapFeature
     // switch it off or back on at any time (a server's host rules, on the game
     // thread), so read On() where the feature acts, never a copy. A plugin that
     // wrote or changed something while it was on puts it back when On() turns
-    // false.
+    // false. The loader writes `on` on the game thread; On() reads it with
+    // std::atomic_ref, so it is safe to call from a render callback too.
     bool on = true;
-    bool On() const { return on; }
+    bool On() const
+    {
+        return std::atomic_ref<bool>(const_cast<bool&>(on)).load(std::memory_order_relaxed);
+    }
 };
 
 namespace PluginMap

@@ -143,7 +143,7 @@ Players' files are protected: loading never writes, the first rewrite keeps a `.
 
 ## Waypoint: point the player at something
 
-`include/plugin_waypoint.h` shows a small window with a label, an X button, an arrow that turns with the camera and the distance to a target (`250m`, or `1.2km` past a kilometre). It closes itself when the player is within 10 m of the target, or when the target has been gone for a couple of seconds. It is header-only, uses only `IModLoaderImGui`, and needs no loader support and no version-map rows.
+`include/plugin_waypoint.h` shows a small window with a label, an X button, an arrow that turns with the camera and the distance to a target (`250m`, or `1.2km` past a kilometre). It closes itself when the player is within 10 m of the target, or when the target has been gone for 120 ticks (about 2 seconds at 60 fps). It is header-only and needs no loader support and no version-map rows of its own. It draws with `IModLoaderImGui` and reads the player and camera through Game-SDK calls, so set up the SDK globals first, as `MultiVersionGuide.md` says.
 
 1. Keep one `PluginWaypoint::Waypoint` for the plugin (a static or a member).
 2. Call `Tick(world)` from your engine tick. This is the only call that reads the game, so it must run on the game thread.
@@ -180,7 +180,7 @@ A plugin that draws its own marker can use `PluginWaypoint::Math` alone. It take
 ```cpp
 const double dx = targetX - playerX;
 const double dy = targetY - playerY;
-const double arrow = PluginWaypoint::Math::RelativeBearingDeg(dx, dy, ControlYawDegrees);
+const double arrow = PluginWaypoint::Math::RelativeBearingDeg(dx, dy, cameraYawDegrees);
 // For a map that turns with the player, draw the arrow `arrow` degrees
 // clockwise from "up". A map that keeps north at the top needs the target's
 // bearing from north instead, not this. If the
@@ -196,7 +196,7 @@ Your plugin declares the interface level it needs. A ModLoader refuses a plugin 
 
 1. Set `PLUGIN_NEEDS_INTERFACE` in your project's preprocessor definitions (every configuration) to the lowest level your plugin uses. Unset, it is 75.
 2. Fill `PluginInfo` with `PLUGIN_DECLARED_INTERFACE`, not a number.
-3. Raise the level only when the compiler tells you to. An error such as `'Images': is not a member of 'IPluginHooks'` means that member needs a newer ModLoader; the comment on it in `plugin_interface.h` names the level.
+3. Raise the level only when the compiler tells you to. An error such as `'Images': is not a member of 'IPluginHooks'` means that member needs a newer ModLoader; the comment on it in `plugin_interface.h` names the level. Only members are hidden: flags and constants are not (`PLUGIN_FIELD_ANY_SIZE` and `PluginCond_*` came in at 74, `PLUGIN_FIELD_LATE` and `PluginWindowFlags_MenuMouseWhereUncovered` at 75), so use one only when your level covers it. An older loader refuses the request or ignores the flag, and that feature stays off.
 
 Use the same value in every file you build into the plugin. Two values in one DLL are a link error (`LNK2038`, `PluginNeedsInterface`).
 
@@ -214,7 +214,7 @@ static PluginInfo s_pluginInfo = {
 };
 ```
 
-The plugin is built on the newest SDK but declares 77, so it loads on ModLoader v1.24.0 and later. Without the define the compiler stops at `hooks->Images`. `include/plugin_images.h` does not stop you: a plugin that includes it needs `PLUGIN_NEEDS_INTERFACE=77` or the images draw nothing. A plugin that touches nothing above 75 needs no define at all and loads on v1.23.0 and later.
+The plugin is built on the newest SDK but declares 77, so it loads on ModLoader v1.24.0 and later. Without the define the compiler stops at `hooks->Images`. `include/plugin_images.h` does not stop you: a plugin that includes it needs `PLUGIN_NEEDS_INTERFACE=77`, or `PLUGIN_OPTIONAL_INTERFACE=77` as in the next section (the images then draw only on ModLoader v1.28.0 and later), or the images draw nothing. A plugin that touches nothing above 75 needs no define at all and loads on v1.23.0 and later.
 
 | Interface level | First ModLoader that loads it |
 |---|---|
@@ -222,14 +222,14 @@ The plugin is built on the newest SDK but declares 77, so it loads on ModLoader 
 | 76 to 77 (77 is the image library) | v1.24.0 |
 | 78 | v1.25.0 |
 | 79 | v1.27.0 |
-| 80 | not released yet |
+| 80 | v1.28.0 |
 
 ### A newer member only when the loader has it
 
 A plugin that needs 73 can still use a member added later, such as `IPluginHooks::Registry` (80), on a loader that has it. Say so with a second define, and the loader says which level it has.
 
 1. Keep `PLUGIN_NEEDS_INTERFACE` at the oldest loader the plugin runs on, and set `PLUGIN_OPTIONAL_INTERFACE` (every configuration, same value in every file) to the newest level it may use. Unset, it is the need.
-2. Put `PLUGIN_EXPORT_HOST_INFO()` once in one `.cpp` file of the plugin. It exports `PluginSetHostInfo`, which a loader with interface 80 calls once, before the plugin's own code runs, with its own level.
+2. Put `PLUGIN_EXPORT_HOST_INFO()` once in one `.cpp` file of the plugin. It exports `PluginSetHostInfo`, which a loader with interface 80 calls once, after `GetPluginInfo` and before `OnPluginLoadHooks` and `PluginInit`, with its own level. Leave it out and the plugin does not link (`LNK2001`, `PluginSetHostInfo`), so the accessors can never silently stay off.
 3. Reach the member through its accessor, not through the raw table, and handle `nullptr`:
 
 ```xml
@@ -249,15 +249,17 @@ void MyTick(const IPluginSelf* self)
 }
 ```
 
-The plugin declares 73, so it loads on every loader from 73 up. A loader below 80 never calls the export, so `PluginHostLevel()` stays at 73, every accessor returns `nullptr` and the feature is simply off. `PluginHostHas(n)` asks whether the loader has level `n`.
+The plugin declares 73, so it loads on every loader from 73 up. A loader below 80 never calls the export, so `PluginHostLevel()` stays at 73, every accessor returns `nullptr` and the feature is simply off, even for a member that older loader has (an accessor for level 77 returns `nullptr` on v1.24.0 to v1.27.0). `PluginHostHas(n)` asks whether the loader is known to have level `n`; the level you declared always counts.
 
-| Accessor | Member | Level |
-|---|---|---|
-| `PluginOptImages(hooks)` | `IPluginHooks::Images` | 77 |
-| `PluginOptDL_AddTexturedTriangles(imgui)` | `IModLoaderImGui::DL_AddTexturedTriangles` | 78 |
-| `PluginOptHostRules(hooks)` | `IPluginHooks::HostRules` | 79 |
-| `PluginOptRegistry(hooks)` | `IPluginHooks::Registry` | 80 |
-| `PluginOptServerAddress(network)` | `IPluginNetworkChannel::GetServerAddress` | 80 |
+| Accessor | Member | Level | Works from |
+|---|---|---|---|
+| `PluginOptImages(hooks)` | `IPluginHooks::Images` | 77 | ModLoader 1.28.0 |
+| `PluginOptDL_AddTexturedTriangles(imgui)` | `IModLoaderImGui::DL_AddTexturedTriangles` | 78 | ModLoader 1.28.0 |
+| `PluginOptHostRules(hooks)` | `IPluginHooks::HostRules` | 79 | ModLoader 1.28.0 |
+| `PluginOptRegistry(hooks)` | `IPluginHooks::Registry` | 80 | ModLoader 1.28.0 |
+| `PluginOptServerAddress(network)` | `IPluginNetworkChannel::GetServerAddress` | 80 | ModLoader 1.28.0 |
+
+`PluginImages::Image` (`plugin_images.h`) uses `PluginOptImages` by itself when `PLUGIN_OPTIONAL_INTERFACE` is 77 or higher and the need is below 77.
 
 An accessor exists only when `PLUGIN_OPTIONAL_INTERFACE` is at least its level, so naming one you did not ask for is a compile error. The raw member stays hidden below the need, as in the section above.
 

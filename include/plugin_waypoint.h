@@ -3,7 +3,9 @@
 // button, an arrow that turns with the camera and the distance to the target,
 // and closes itself when the player arrives or the target is gone.
 // Header-only; uses only IModLoaderImGui calls the loader already has, and
-// needs nothing from the loader's version map (no offsets, sizes or natives).
+// needs no version-map rows (no offsets, sizes or natives of its own). It calls
+// Game-SDK functions (GetPlayerController, GetPlayerViewPoint, GetViewTarget), so the
+// plugin must have set up the SDK globals first (see MultiVersionGuide.md).
 //
 // The helper registers nothing. The plugin keeps its own tick and widget:
 //   - call Waypoint::Tick(world) from the plugin's engine tick (game thread),
@@ -82,10 +84,10 @@ namespace PluginWaypoint
 	{
 		// The waypoint closes itself within this many metres of the target.
 		float autoCloseMeters = 10.0f;
-		// How many ticks in a row the resolver may fail before the waypoint
+		// How many ticks in a row (120 is about 2 s at 60 fps) the resolver may fail before the waypoint
 		// closes (it closes on the next failure after this many). While it fails the window says "Location lost."
 		int lostGraceTicks = 120;
-		// Side of the square reserved for the arrow, in pixels.
+		// Side of the square reserved for the arrow, in pixels at the default font; it does not follow the font scale.
 		float arrowAreaSize = 90.0f;
 		// Arrow fill colour (r, g, b, a).
 		float arrowColor[4] = { 0.95f, 0.65f, 0.15f, 1.0f };
@@ -290,7 +292,8 @@ namespace PluginWaypoint
 
 			const double meters = Math::Distance3dMeters(dx, dy, dz);
 			char text[32];
-			if (meters < 1000.0)
+			// 999.5 and up would print as "1000m", so it switches to km there.
+			if (meters < 999.5)
 				snprintf(text, sizeof(text), "%.0fm", meters);
 			else
 				snprintf(text, sizeof(text), "%.1fkm", meters / 1000.0);
