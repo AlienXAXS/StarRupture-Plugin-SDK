@@ -4,7 +4,15 @@
   solution build. Build and run it with:
 
     msbuild Tests\PluginImagesTests\PluginImagesTests.vcxproj /p:Configuration=Release /p:Platform=x64
+    msbuild Tests\PluginImagesTests\PluginImagesTests.vcxproj /p:Configuration=Optional /p:Platform=x64
+    msbuild Tests\PluginImagesTests\PluginImagesTests.vcxproj /p:Configuration=Optional74 /p:Platform=x64
     build\tests\plugin_images_tests.exe
+    build\tests\plugin_images_optional_tests.exe
+    build\tests\plugin_images_optional74_tests.exe
+
+  Optional and Optional74 build plugin_images_optional_tests.cpp with the optional
+  interface level 77 on top of a need of 75 and 74 (PLUGIN_NEEDS_INTERFACE,
+  PLUGIN_OPTIONAL_INTERFACE), the way a plugin that uses Images only when the loader has it does.
 
   The header needs only plugin_interface.h, so nothing else is compiled.
 -->
@@ -12,6 +20,14 @@
   <ItemGroup Label="ProjectConfigurations">
     <ProjectConfiguration Include="Release|x64">
       <Configuration>Release</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Optional|x64">
+      <Configuration>Optional</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Optional74|x64">
+      <Configuration>Optional74</Configuration>
       <Platform>x64</Platform>
     </ProjectConfiguration>
   </ItemGroup>
@@ -32,8 +48,14 @@
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
   <PropertyGroup>
     <OutDir>$(MSBuildThisFileDirectory)..\..\build\tests\</OutDir>
-    <IntDir>$(MSBuildThisFileDirectory)..\..\obj\Tests\PluginImagesTests\</IntDir>
+    <IntDir>$(MSBuildThisFileDirectory)..\..\obj\Tests\PluginImagesTests\$(Configuration)\</IntDir>
     <TargetName>plugin_images_tests</TargetName>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)'=='Optional'">
+    <TargetName>plugin_images_optional_tests</TargetName>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)'=='Optional74'">
+    <TargetName>plugin_images_optional74_tests</TargetName>
   </PropertyGroup>
   <ItemDefinitionGroup>
     <ClCompile>
@@ -49,8 +71,21 @@
       <GenerateDebugInformation>true</GenerateDebugInformation>
     </Link>
   </ItemDefinitionGroup>
-  <ItemGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)'=='Optional'">
+    <ClCompile>
+      <PreprocessorDefinitions>PLUGIN_NEEDS_INTERFACE=75;PLUGIN_OPTIONAL_INTERFACE=77;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)'=='Optional74'">
+    <ClCompile>
+      <PreprocessorDefinitions>PLUGIN_NEEDS_INTERFACE=74;PLUGIN_OPTIONAL_INTERFACE=77;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+  </ItemDefinitionGroup>
+  <ItemGroup Condition="'$(Configuration)'=='Release'">
     <ClCompile Include="plugin_images_tests.cpp" />
+  </ItemGroup>
+  <ItemGroup Condition="'$(Configuration)'!='Release'">
+    <ClCompile Include="plugin_images_optional_tests.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="..\..\include\plugin_images.h" />
