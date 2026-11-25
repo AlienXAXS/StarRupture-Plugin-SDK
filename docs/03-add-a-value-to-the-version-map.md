@@ -42,7 +42,7 @@ It prints the offset, size and bool mask of every key, and which keys it could n
 
 ## Check it on every current build
 
-A row that works on one build and not on the others breaks the plugin on the others. The current builds are CL 127004, 128786, 129402 and 130045. Two of them can be live at once. Keep the exe of each build.
+A row that works on one build and not on the others breaks the plugin on the others. Two builds can be live at once. The CL numbers it has rows for are in `StarRupture-ModLoader-Core/hooks/game/version_map.generated.h`. Keep the exe of each build you test.
 
 1. Members and sizes: run the `--layout` command above on each build's exe. Check that the numbers you want to send are right on every build, and that the bool mask is the same.
 2. Functions: `sr-aobscan` can rescan a pattern on another build. Put your row for one build into a copy of the loader's own file, `StarRupture-ModLoader-Core/hooks/game/version_map.generated.h` in the [ModLoader repository](https://github.com/AlienXAXS/StarRupture-ModLoader). It is not a plugin header. Then run, for each other build:
@@ -107,7 +107,7 @@ We will offer worked examples if you want to move an existing plugin over, but y
    48 89 5C 24 ?? 48 89 74 24 ?? 57 48 81 EC ?? ?? ?? ?? 48 8B 05 ?? ?? ?? ?? 48 33 C4 48 89 84 24 ?? ?? ?? ?? 0F B6 41
    ```
 
-   It is the same on all four current builds.
+   It is the same on every build the version map covers.
 3. The address. The function sits at a different RVA on each build:
 
    | CL | RVA |

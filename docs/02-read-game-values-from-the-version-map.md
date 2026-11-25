@@ -6,7 +6,7 @@ The loader keeps the answers in its version object map, called the version map (
 
 ## What "multi-version" means
 
-A multi-version plugin is one DLL that loads on every current game build. Two game builds can be live at once, so a plugin that is not multi-version breaks for part of the players. The current builds are CL 127004, 128786, 129402 and 130045.
+A multi-version plugin is one DLL that loads on every current game build. Two game builds can be live at once, so a plugin that is not multi-version breaks for part of the players. The builds the version map covers are the rows in the loader's `StarRupture-ModLoader-Core/hooks/game/version_map.generated.h`, each tagged with its CL number.
 
 A plugin is multi-version when it reads every per-build value from the loader. It then says so with `PLUGIN_MAP_MIGRATED`.
 
