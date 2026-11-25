@@ -1,0 +1,6 @@
+- Interface level 80 adds IPluginHooks::Registry (GetPluginVersion, GetDeclaredFeatures, GetFeatureCatalog) and IPluginNetworkChannel::GetServerAddress
+- A plugin now sets PLUGIN_NEEDS_INTERFACE to the lowest interface level it uses and fills PluginInfo with PLUGIN_DECLARED_INTERFACE; members above that level are a compile error, so a plugin that uses nothing newer loads on older ModLoaders
+- The release workflow writes each variant's own interface_version_min to its update manifest, so a Client and a Server build may need different levels
+- PLUGIN_OPTIONAL_INTERFACE with PLUGIN_EXPORT_HOST_INFO() lets a plugin use a newer member only when the ModLoader has it; the PluginOpt accessors return nullptr on an older ModLoader
+- plugin_images.h works for a plugin that needs a level below 77 and asks for 77 as its optional level
+- New plugin_waypoint.h: a small window with a label, an arrow that turns with the camera and the distance to a target

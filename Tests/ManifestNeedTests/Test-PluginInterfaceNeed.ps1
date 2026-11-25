@@ -1,4 +1,4 @@
-# Checks how plugin-release.yml works out interface_version_min for the update manifest.
+# Checks how plugin-release.yml works out interface_version_min, per variant, for the update manifest.
 # It cuts Get-PluginInterfaceNeed out of the workflow file itself (between the
 # "BEGIN/END plugin-interface-need" markers), builds small plugin projects in a temp
 # folder and runs the function against each. No release runs. Exit code is the number of
@@ -20,6 +20,7 @@ $header = @'
 #define PLUGIN_INTERFACE_VERSION_MAX 80
 #define PLUGIN_INTERFACE_BASELINE 75
 #define PLUGIN_INTERFACE_VERSION 80
+static_assert(PLUGIN_NEEDS_INTERFACE >= 72 && PLUGIN_NEEDS_INTERFACE <= PLUGIN_INTERFACE_VERSION_MAX, "range");
 '@
 $oldHeader = $header -replace '(?m)^#define PLUGIN_INTERFACE_BASELINE.*\r?\n', ''
 
@@ -48,8 +49,8 @@ $converted   = 'PluginInfo info{}; info.interfaceVersion = PLUGIN_DECLARED_INTER
 $unconverted = 'PluginInfo info{}; info.interfaceVersion = PLUGIN_INTERFACE_VERSION;'
 
 $cases = @()
-function Case([string]$name, [string]$dir, $expect, [string]$hdr = $header) {
-  $script:cases += [pscustomobject]@{ Name = $name; Dir = $dir; Expect = $expect; Header = $hdr }
+function Case([string]$name, [string]$dir, $expect, [string]$hdr = $header, [string]$variant = 'Client') {
+  $script:cases += [pscustomobject]@{ Name = $name; Dir = $dir; Expect = $expect; Header = $hdr; Variant = $variant }
 }
 
 Case 'define in a vcxproj PreprocessorDefinitions list' (New-Plugin 'vcx-list' @{
@@ -68,11 +69,31 @@ Case 'per-config entries that agree (Client, Server, Debug)' (New-Plugin 'cfg-ag
     (DefGroup 'Server Release|x64' 'WIN32;PLUGIN_NEEDS_INTERFACE=77'))
   'src\plugin.cpp' = $converted }) 77
 
-Case 'per-config entries that disagree (Client 77, Server 78)' (New-Plugin 'cfg-disagree' @{
+$clientServer = @{
   'P.vcxproj' = Vcxproj @(
     (DefGroup 'Client Release|x64' 'PLUGIN_NEEDS_INTERFACE=77'),
     (DefGroup 'Server Release|x64' 'PLUGIN_NEEDS_INTERFACE=78'))
+  'src\plugin.cpp' = $converted }
+Case 'Client 77, Server 78: the Client variant gets 77' (New-Plugin 'cfg-split-client' $clientServer) 77 $header 'Client'
+Case 'Client 77, Server 78: the Server variant gets 78' (New-Plugin 'cfg-split-server' $clientServer) 78 $header 'Server'
+
+Case 'Client entry only: the Server variant gets the baseline' (New-Plugin 'cfg-client-only' @{
+  'P.vcxproj' = Vcxproj @((DefGroup 'Client Release|x64' 'PLUGIN_NEEDS_INTERFACE=80'))
+  'src\plugin.cpp' = $converted }) 75 $header 'Server'
+
+Case 'one entry for both variants (condition names neither)' (New-Plugin 'cfg-both' @{
+  'Shared.props' = Vcxproj @((DefGroup '' 'PLUGIN_NEEDS_INTERFACE=79'))
+  'P.vcxproj' = Vcxproj @()
+  'src\plugin.cpp' = $converted }) 79 $header 'Server'
+
+Case 'two Release values for one variant disagree' (New-Plugin 'cfg-disagree' @{
+  'P.vcxproj' = Vcxproj @((DefGroup 'Client Release|x64' 'PLUGIN_NEEDS_INTERFACE=77'))
+  'Shared.props' = Vcxproj @((DefGroup 'Client Release|x64' 'PLUGIN_NEEDS_INTERFACE=78'))
   'src\plugin.cpp' = $converted }) 'ERROR:differs between configurations'
+
+Case 'need and optional level both set: the need is read' (New-Plugin 'need-optional' @{
+  'P.vcxproj' = Vcxproj @((DefGroup 'Client Release|x64' 'PLUGIN_NEEDS_INTERFACE=77;PLUGIN_OPTIONAL_INTERFACE=80'))
+  'src\plugin.cpp' = $converted }) 77
 
 Case 'Debug differs from Release: Release value used, warning' (New-Plugin 'cfg-debug' @{
   'P.vcxproj' = Vcxproj @(
@@ -118,11 +139,15 @@ Case 'need set but PluginInfo still uses the version macro' (New-Plugin 'need-un
 
 Case 'out of range, too high (81)' (New-Plugin 'high' @{
   'P.vcxproj' = Vcxproj @((DefGroup 'Client Release|x64' 'PLUGIN_NEEDS_INTERFACE=81'))
-  'src\plugin.cpp' = $converted }) 'ERROR:outside the 70 to 80'
+  'src\plugin.cpp' = $converted }) 'ERROR:outside the 72 to 80'
 
 Case 'out of range, too low (60)' (New-Plugin 'low' @{
   'P.vcxproj' = Vcxproj @((DefGroup 'Client Release|x64' 'PLUGIN_NEEDS_INTERFACE=60'))
-  'src\plugin.cpp' = $converted }) 'ERROR:outside the 70 to 80'
+  'src\plugin.cpp' = $converted }) 'ERROR:outside the 72 to 80'
+
+Case 'below the static_assert floor (71)' (New-Plugin 'floor' @{
+  'P.vcxproj' = Vcxproj @((DefGroup 'Client Release|x64' 'PLUGIN_NEEDS_INTERFACE=71'))
+  'src\plugin.cpp' = $converted }) 'ERROR:outside the 72 to 80'
 
 Case 'not a number (property reference)' (New-Plugin 'nan' @{
   'P.vcxproj' = Vcxproj @((DefGroup 'Client Release|x64' 'PLUGIN_NEEDS_INTERFACE=$(NeedLevel)'))
@@ -141,6 +166,7 @@ Case 'SDK checkout and build output are not read' (New-Plugin 'skipdirs' @{
   'src\plugin.cpp' = $converted
   'plugin-sdk\include\plugin_interface.h' = "#define PLUGIN_NEEDS_INTERFACE PLUGIN_INTERFACE_BASELINE`n"
   'plugin-sdk\ExamplePlugin\E.vcxproj' = Vcxproj @((DefGroup 'Client Release|x64' 'PLUGIN_NEEDS_INTERFACE=99'))
+  'StarRupture SDK\generated\G.h' = "#define PLUGIN_NEEDS_INTERFACE 99`n"
   'build\Client Release\junk.props' = Vcxproj @((DefGroup '' 'PLUGIN_NEEDS_INTERFACE=99')) }) 75
 
 Case 'test projects are not read' (New-Plugin 'tests-dir' @{
@@ -155,7 +181,7 @@ Case 'number too large for an integer' (New-Plugin 'huge' @{
 Case 'comment mentioning PLUGIN_DECLARED_INTERFACE does not count' (New-Plugin 'comment-converted' @{
   'src\plugin.cpp' = "// move to PLUGIN_DECLARED_INTERFACE later`n$unconverted`n" }) 80
 
-# The header in this checkout (no baseline until the interface change lands).
+# The header in this checkout.
 $real = Join-Path $PSScriptRoot '..\..\include\plugin_interface.h'
 if (Test-Path $real) {
   Case 'real include\plugin_interface.h, unconverted plugin' (New-Plugin 'real-header' @{ 'src\plugin.cpp' = $unconverted }) 'REAL' ([System.IO.File]::ReadAllText((Resolve-Path $real)))
@@ -164,14 +190,14 @@ if (Test-Path $real) {
 $failed = 0
 foreach ($c in $cases) {
   $out = @(); $err = $null
-  try { $out = @(Get-PluginInterfaceNeed -PluginRoot $c.Dir -HeaderText $c.Header 6>&1) } catch { $err = $_.Exception.Message }
+  try { $out = @(Get-PluginInterfaceNeed -PluginRoot $c.Dir -HeaderText $c.Header -Variant $c.Variant 6>&1) } catch { $err = $_.Exception.Message }
   $value = $out | Where-Object { $_ -is [int] } | Select-Object -Last 1
   $msgs = @($out | Where-Object { $_ -is [System.Management.Automation.InformationRecord] } | ForEach-Object { "$($_.MessageData)" })
   if ($c.Expect -is [int]) {
     $ok = ($null -eq $err) -and ($value -eq $c.Expect)
     $got = if ($err) { "ERROR: $err" } else { "$value" }
   } elseif ($c.Expect -eq 'REAL') {
-    $ok = ($null -eq $err) -and ($value -is [int]) -and ($value -ge 70)
+    $ok = ($null -eq $err) -and ($value -is [int]) -and ($value -ge 72)
     $got = if ($err) { "ERROR: $err" } else { "$value" }
   } else {
     $pattern = $c.Expect.Substring(6)
