@@ -1551,7 +1551,8 @@ struct PluginFeatureDesc
                                         // "what the build allows": the loader owns the flag until the plugin unloads.
                                         // Read it where the feature acts, and put back anything the feature changed
                                         // when it turns false. From a thread other than the game thread, read it
-                                        // with std::atomic_ref<bool> (PluginMapFeature::On() does).
+                                        // with std::atomic_ref<bool> (PluginMapFeature::On() does), so each read
+                                        // goes to memory and sees the loader's latest value.
 };
 
 #define PLUGIN_FEATURE_DESC_INIT { (uint32_t)sizeof(PluginFeatureDesc),                                    nullptr, nullptr, nullptr, 0, nullptr, 0, nullptr }
