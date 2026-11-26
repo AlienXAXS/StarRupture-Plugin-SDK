@@ -5,3 +5,4 @@
 - plugin_images.h works for a plugin that needs a level below 77 and asks for 77 as its optional level
 - New plugin_waypoint.h: a small window with a label, an arrow that turns with the camera and the distance to a target
 - New item_stack_limits.h: raise item stack sizes (never below an item's own, never items that do not stack) and put them back to vanilla
+- New plugin_go_to_item.h: call the Go to Item plugin from the engine tick to track items and places; GoToItem::GetIfOn() tells you when to hide your Go button

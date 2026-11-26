@@ -16,6 +16,7 @@ Making one DLL run on every game build? Start with [MultiVersionGuide.md](MultiV
 | `include/item_icons.h` | `ItemIcons::Loader`: loads item icons the first time they are drawn, a few per tick (`icon_requests.h` is its request queue) |
 | `include/plugin_images.h` | `PluginImages::Image`: draws an image from the loader's image library, or reserves its space while it loads (interface 77, loader 1.24.0 or newer) |
 | `include/plugin_waypoint.h` | `PluginWaypoint::Waypoint`: a small window with an arrow and a distance that points the player at a target; `Math::` has the bearing and distance arithmetic alone |
+| `include/plugin_go_to_item.h` | `GoToItem::GetIfOn()`: calls the Go to Item plugin to track items and places, and tells you when to hide your Go button. Game thread only |
 | `PluginGameBuild.props` | Defines `PLUGIN_GAME_BUILT_CL` from the build_cl.txt of the Game-SDK headers a plugin compiles against (a stale pin only warns); import it from a plugin's `Shared.props` |
 | `ExamplePlugin/` | Minimal starter plugin — copy, rename, and go |
 | `StarRupture SDK/` | Dumper-7 generated UE5 SDK headers (Client + Server + Generic) |
@@ -193,6 +194,16 @@ The tests for `Math::` are in `Tests/WaypointTests/` and build without the game.
 ## Item stack sizes
 
 `include/item_stack_limits.h` is a header-only helper to apply and restore item stack sizes. It raises `MaxStack` on the items you give it (never below an item's own vanilla stack, never on items that do not stack, capped at 9999) and puts every value back to vanilla on request. Both members are reflected, so the loader reads their offsets from the running game's own reflection data and a build with no version map row still works; `Resolve` is false when the loader cannot give either member at the compiled size. The "does not stack" value is read by name from the game's enum, and if that lookup misses nothing is raised. It needs plugin interface 73 (`plugin_map.h`, which it includes, calls the v73 `DeclareFeature`) and the Game-SDK's `AuItems_classes.hpp`. Call it from `Tick`: it holds the items as `ObjectRef` and checks each before a write. Usage is in the header's comment; the tests in `Tests/ItemStackLimitsTests/` build without the game.
+
+## Go to Item: a Go button
+
+`include/plugin_go_to_item.h` lets a plugin ask the Go to Item plugin to mark where an item is produced, or to mark a place. It is header-only and your plugin does not link against Go to Item.
+
+- Call it from your engine tick only, never from a UI or draw callback: the ModLoader can reload Go to Item and does not wait for another plugin's call to finish. Store the click and act on it in the tick.
+- Show your Go button only while `GoToItem::GetIfOn()` returns a table (null: not installed, not loaded or turned off) and, for an item, `CanTrack` does not return `GOTO_FEATURE_OFF`.
+- Take the table again for each use, and keep no pointer it gives you past the tick.
+
+The header has the worked example, the version checks for newer calls (`GOTOITEM_HAS`) and the full rules.
 
 ## Interface versioning
 
