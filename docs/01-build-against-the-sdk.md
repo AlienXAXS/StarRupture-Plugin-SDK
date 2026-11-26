@@ -75,4 +75,6 @@ ExamplePlugin runs only on the game build it was compiled for. Page 2 shows what
 
    RELOAD works cleanly only when your plugin's shutdown undoes everything it set up (hooks, UI registrations, timers) and the plugin keeps no UObject pointers: fetch objects again each tick, because objects die on travel and on garbage collection. RELOAD assumes that shutdown, callbacks, hooks and resource cleanup are all correct. If your plugin holds a lot of native or graphics (RHI) resources, restarting the game is the safer way to test. [PluginDevelopment.md](../PluginDevelopment.md) lists those settings.
 
-Before you ask anyone for help, include that log.
+If the plugin does not load, or a feature is off, [page 6](06-fix-a-plugin-that-will-not-load.md) explains the log lines.
+
+Before you ask anyone for help, include the lines about your plugin from that log, and only those (page 6 says why).

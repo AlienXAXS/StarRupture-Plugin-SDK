@@ -9,6 +9,8 @@ Read the pages in order. Each one is short and stands on its own.
 3. [Add a value to the version map](03-add-a-value-to-the-version-map.md): what to do when a value your plugin needs has no row yet, and how to send us the row.
 4. [Get listed in Browse](04-get-listed-in-browse.md): what a Browse entry is, and how to send us yours so your plugin shows up in the loader's Browse tab.
 5. [Publish on Nexus](05-publish-on-nexus.md): put a released version on Nexus Mods.
+6. [Fix a plugin that will not load or a feature that is off](06-fix-a-plugin-that-will-not-load.md): read ModLoader.log, find the line for your plugin, and see what it means and what to do.
+7. [Migrate an existing plugin](07-migrate-an-existing-plugin.md): move a released plugin to the current SDK and the version map without changing its own build, versioning or release setup.
 
 The full API reference is [PluginDevelopment.md](../PluginDevelopment.md). It is long, so use it to look things up, not to start.
 

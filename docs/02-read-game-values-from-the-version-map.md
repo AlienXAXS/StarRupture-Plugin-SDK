@@ -4,6 +4,8 @@ A game update moves functions, shifts members and resizes structs. A plugin that
 
 The loader keeps the answers in its version object map, called the version map (or v map) from here on. It has a row per key and game build: function addresses, member offsets and struct sizes. Your plugin asks for a key, and gets the value for the build that is running. When the game updates, we add rows to the version map and your plugin keeps working. You do not rebuild it.
 
+If you already have a released plugin, [page 7](07-migrate-an-existing-plugin.md) gives the steps in order and leaves your build and release setup alone.
+
 ## What "multi-version" means
 
 A multi-version plugin is one DLL that loads on every current game build. Two game builds can be live at once, so a plugin that is not multi-version breaks for part of the players. The builds the version map covers are the rows in the loader's `StarRupture-ModLoader-Core/hooks/game/version_map.generated.h`, each tagged with its CL number.
