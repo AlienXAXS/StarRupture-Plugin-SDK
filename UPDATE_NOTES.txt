@@ -4,3 +4,4 @@
 - PLUGIN_OPTIONAL_INTERFACE with PLUGIN_EXPORT_HOST_INFO() lets a plugin use a newer member only when the ModLoader has it; the PluginOpt accessors return nullptr on an older ModLoader
 - plugin_images.h works for a plugin that needs a level below 77 and asks for 77 as its optional level
 - New plugin_waypoint.h: a small window with a label, an arrow that turns with the camera and the distance to a target
+- New item_stack_limits.h: raise item stack sizes (never below an item's own, never items that do not stack) and put them back to vanilla
