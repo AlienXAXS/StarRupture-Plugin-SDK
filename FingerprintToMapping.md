@@ -2,7 +2,7 @@
 
 Your plugin finds game code with byte patterns and reads game data at fixed offsets and sizes.
 This guide moves each of those onto the loader's version map, one step at a time. For the full
-API, see [PluginDevelopment.md](PluginDevelopment.md).
+API, see [PluginDevelopment.md](https://github.com/AlienXAXS/StarRupture-Plugin-SDK/blob/main/PluginDevelopment.md).
 
 ## 1. Why
 
@@ -84,13 +84,16 @@ parameter is the last one; also check `param.resolvedSize == sizeof(<engine type
 ## 3. Get the CI row for each key
 
 The pipeline writes a row per game build only for keys it knows about. For an outside plugin
-that means a pull request; nothing is picked up automatically.
+that means asking us: open an issue on the
+[SDK repository](https://github.com/AlienXAXS/StarRupture-Plugin-SDK/issues) with the
+`Class::Member` list, and we write, sign and publish the rows. Nothing is picked up automatically.
 
-- **Function or global:** add your plugin's rows for the build you tested to the loader's
-  `hooks/game/version_map.generated.h`, and add your plugin to the `plugins` input of
-  starrupture-ci's `sr-client-check.yml`. CI then scans it on every new build.
-- **Native member, or the size of a plain C++ struct:** add a line to starrupture-ci's
-  `ci/native-keys.txt`, plus a row in `kFieldRows` for the build you tested.
+- **Function or global:** give us the key, its pattern and RVA for the build you tested. We add the
+  rows to the loader's version map and add your plugin to the starrupture-ci scan, so CI finds it
+  on every new build.
+- **Native member, or the size of a plain C++ struct:** give us the key and the offset and size you
+  found for the build you tested. We add a line like the one below to starrupture-ci's
+  `ci/native-keys.txt` and the row for that build.
 
 ```
 MiniMap UTexture::SRGB optional
@@ -193,7 +196,7 @@ PLUGIN_MAP_MIGRATED, so it would read this game's data where CL-yyyy had it".
 7. `PluginSdkRuntime::Init` is first in `PluginInit`.
 8. `node tools/rule3-check.mjs` is clean.
 9. Check `ModLoader.log` on your own build and on another one.
-10. Then set `PLUGIN_MAP_MIGRATED` and send the pull requests from step 3.
+10. Then set `PLUGIN_MAP_MIGRATED` and send us the list from step 3.
 
 ## 8. Worked example: ConfirmHotkey
 
