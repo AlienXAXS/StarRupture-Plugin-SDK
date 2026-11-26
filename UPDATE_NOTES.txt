@@ -1,3 +1,4 @@
+- Interface level 83 adds IPluginNetworkChannel::SendPacketToServerPlugin and SendPacketToClientPlugin: two plugins that work together can send a message to each other by name. Use them through PluginOptSendToServerPlugin and PluginOptSendToClientPlugin so your plugin still loads on older ModLoaders
 - Interface level 80 adds IPluginHooks::Registry (GetPluginVersion, GetDeclaredFeatures, GetFeatureCatalog) and IPluginNetworkChannel::GetServerAddress
 - A plugin now sets PLUGIN_NEEDS_INTERFACE to the lowest interface level it uses and fills PluginInfo with PLUGIN_DECLARED_INTERFACE; members above that level are a compile error, so a plugin that uses nothing newer loads on older ModLoaders
 - The release workflow writes each variant's own interface_version_min to its update manifest, so a Client and a Server build may need different levels
