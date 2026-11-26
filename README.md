@@ -200,7 +200,8 @@ The tests for `Math::` are in `Tests/WaypointTests/` and build without the game.
 `include/plugin_go_to_item.h` lets a plugin ask the Go to Item plugin to mark where an item is produced, or to mark a place. It is header-only and your plugin does not link against Go to Item.
 
 - Call it from your engine tick only, never from a UI or draw callback: the ModLoader can reload Go to Item and does not wait for another plugin's call to finish. Store the click and act on it in the tick.
-- Show your Go button only while `GoToItem::GetIfOn()` returns a table (null: not installed, not loaded or turned off) and, for an item, `CanTrack` does not return `GOTO_FEATURE_OFF`.
+- Show your Go button only while `GoToItem::GetIfOn()` returns a table (null: not installed, not loaded or turned off) and, for an item, `CanTrack` returns `GOTO_OK` or `GOTO_NO_LOCATION_YET`.
+- `IsTracked` can return an error code such as `GOTO_OFF`: test for `== 1`, not for non-zero.
 - Take the table again for each use, and keep no pointer it gives you past the tick.
 
 The header has the worked example, the version checks for newer calls (`GOTOITEM_HAS`) and the full rules.

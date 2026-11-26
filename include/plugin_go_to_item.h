@@ -11,7 +11,7 @@
 // then for the loader's own module, so the implementation can move into the
 // loader later without any caller changing. The header holds no game offsets,
 // sizes or patterns: everything version-specific stays in the implementing
-// module and its version map keys.
+// module and its version object map keys.
 //
 // Conventions (same as the rest of plugin_interface.h):
 //   - plain C types across the DLL boundary, no STL, no exceptions;
@@ -68,16 +68,18 @@
 //   - GetIfOn() is null: GoToItem is not installed, is not loaded (disabled,
 //     unloaded, between the two halves of a RELOAD) or is turned off. Ask again
 //     on a later tick: it can come back without a restart.
-//   - CanTrack returns GOTO_FEATURE_OFF: item lookup is off on this game build
-//     (TrackItem returns it too).
+//   - For an item, CanTrack returns anything but GOTO_OK or GOTO_NO_LOCATION_YET.
+//     GOTO_FEATURE_OFF means item lookup is off on this game build (TrackItem
+//     returns it too).
 //
 // Turned off, what an implementation must do: every function that returns a
-// GoToResult (CanTrack, TrackItem, UntrackItem, SelectSource, SetItemColor and
-// every version-2 function, IsTrackedTarget among them) returns GOTO_OFF and
-// changes nothing. The others (counts, colours, IsTracked, ListTracked,
-// ListSources, ClearTracked) do not report it, so never use them to detect it,
-// and some implementations do not yet answer GOTO_OFF from every version-1
-// call. GetIfOn() asks IsTrackedTarget. A version-1 GoToItem has no off state.
+// result code, version 1 and 2, returns GOTO_OFF and changes nothing: CanTrack,
+// TrackItem, UntrackItem, IsTracked, SelectSource, SetItemColor and every
+// version-2 function. So IsTracked and IsTrackedTarget are NOT yes/no answers:
+// GOTO_OFF is non-zero. Compare their value with 1. The other functions cannot
+// report that GoToItem is off, so never use them to detect it, and ClearTracked
+// may still clear the set. GetIfOn() asks IsTrackedTarget. A version-1 GoToItem
+// has no off state.
 
 #include <cstdint>
 #include <cstddef>
@@ -228,8 +230,8 @@ struct GoToItemApi
 
 	// --- change detection ---------------------------------------------------
 	// Climbs by one whenever the tracked set, any item's sources, a pick or a
-	// colour changes. A UI polls this each frame and re-reads lists only when
-	// it moved (no per-frame copying, no file I/O).
+	// colour changes. Poll it in your engine tick, re-read lists only when it
+	// moved and hand your UI a copy (no per-frame copying, no file I/O).
 	uint32_t (*GetChangeCounter)();
 
 	// --- can this item be located? (the Go button's look and tooltip) -------
@@ -237,7 +239,9 @@ struct GoToItemApi
 	// also gets it for a known item it has no sources for yet); otherwise the
 	// reason: GOTO_NO_LOCATION_YET while no producing base is known,
 	// GOTO_FEATURE_OFF when item lookup is off on this game build, GOTO_OFF while
-	// turned off. TrackItem does not require GOTO_OK.
+	// turned off, GOTO_NOT_READY with no world yet, GOTO_UNKNOWN_ITEM or
+	// GOTO_BAD_ARGUMENT for a bad key. Show Go on GOTO_OK or
+	// GOTO_NO_LOCATION_YET only: TrackItem does not require GOTO_OK.
 	int32_t (*CanTrack)(const char* itemKey);
 
 	// --- tracked set ----------------------------------------------------------
@@ -253,7 +257,8 @@ struct GoToItemApi
 	int32_t (*UntrackItem)(const char* itemKey);
 	// Remove all items.
 	void    (*ClearTracked)();
-	// 1 if tracked, else 0.
+	// 1 if tracked, 0 if not, GOTO_OFF while turned off. NOT a yes/no answer:
+	// test IsTracked(key) == 1, because any other non-zero value is not "tracked".
 	int32_t (*IsTracked)(const char* itemKey);
 
 	// Copies up to `max` tracked items into `out` (stride = elementSize, the
@@ -304,7 +309,8 @@ struct GoToItemApi
 	// TrackPlace.
 	int32_t (*TrackTarget)(uint32_t kind, const char* key);
 	int32_t (*UntrackTarget)(uint32_t kind, const char* key);
-	// 1 tracked, 0 not, or GOTO_OFF.
+	// 1 tracked, 0 not, or a negative result (GOTO_OFF, GOTO_UNKNOWN_TARGET).
+	// Test for == 1, not for non-zero.
 	int32_t (*IsTrackedTarget)(uint32_t kind, const char* key);
 	// Every tracked target of every kind, in tracking order. Like ListTracked,
 	// `elementSize` is the caller's sizeof(GoToTarget): each element is written at
@@ -345,7 +351,8 @@ static_assert(offsetof(GoToItemApi, UntrackPlace) == 168, "GoToItemApi v2 layout
 //       bool show = false;
 //       if (const GoToItemApi* api = GoToItem::GetIfOn())
 //       {
-//           const int32_t can = api->CanTrack(kItemKey);       // your item's key
+//           // your item's key; call this only while your panel is shown
+//           const int32_t can = api->CanTrack(kItemKey);
 //           show = can == GOTO_OK || can == GOTO_NO_LOCATION_YET;
 //           if (s_goClicked.exchange(false) && show)
 //               api->TrackItem(kItemKey);
