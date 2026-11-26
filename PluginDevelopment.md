@@ -142,7 +142,7 @@ AnyFolder\
   StarRupture-Plugin-<Name>\
 ```
 
-`--recursive` also fetches the Game-SDK headers (`StarRupture SDK`) that live inside the Plugin SDK. A plugin that has its own `StarRupture SDK` submodule uses that one instead. The reusable release workflow (`plugin-release.yml`) uses the Game-SDK commit that the Plugin SDK it checks out pins (see [Your game build](#your-game-build-plugin_game_built_cl)). To point the build somewhere else, pass the paths on the command line; they win over the defaults:
+`--recursive` also fetches the Game-SDK headers (`StarRupture SDK`) that live inside the Plugin SDK. A plugin that has its own `StarRupture SDK` submodule uses that one instead. The reusable release workflow (`plugin-release.yml`) takes the Plugin SDK from its own commit (the tag in `uses:`) unless you set `sdk_ref`, and uses the Game-SDK commit that checkout pins (see [Your game build](#your-game-build-plugin_game_built_cl)). To point the build somewhere else, pass the paths on the command line; they win over the defaults:
 
 ```
 msbuild /p:Configuration="Client Release" /p:Platform=x64 ^

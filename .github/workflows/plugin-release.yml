@@ -25,10 +25,11 @@
 #   nexus_display_name     - Name shown on the Nexus files (defaults to plugin_name).
 #   nexus_description_file - BBCode file that replaces the Nexus page description when it exists
 #                            (default nexus/description.bbcode).
-#   sdk_repository, sdk_ref - Where to take the Plugin SDK headers from (default: the default
-#                            branch of AlienXAXS/StarRupture-Plugin-SDK). The Game-SDK comes
-#                            from that checkout's "StarRupture SDK" submodule, at the commit
-#                            the checkout pins.
+#   sdk_repository, sdk_ref - Where to take the Plugin SDK headers from (default: the same
+#                            commit as this workflow, so the tag or sha in "uses:" picks
+#                            both). sdk_ref overrides it. Another sdk_repository needs
+#                            sdk_ref too. The Game-SDK comes from that checkout's
+#                            "StarRupture SDK" submodule, at the commit the checkout pins.
 #   dry_run                - Build and package, upload the files as a workflow artifact, but
 #                            create no GitHub release and upload nothing to Nexus.
 #
@@ -89,12 +90,12 @@ on:
         type: string
         default: 'nexus/description.bbcode'
       sdk_repository:
-        description: 'Repository to take the Plugin SDK headers from'
+        description: 'Repository to take the Plugin SDK headers from (empty: the repository of this workflow); needs sdk_ref when it is another one'
         required: false
         type: string
-        default: 'AlienXAXS/StarRupture-Plugin-SDK'
+        default: ''
       sdk_ref:
-        description: 'Branch, tag or sha of the Plugin SDK (empty: default branch)'
+        description: 'Branch, tag or sha of the Plugin SDK (empty: the commit of this workflow)'
         required: false
         type: string
         default: ''
@@ -116,11 +117,40 @@ jobs:
       - name: Checkout plugin repository
         uses: actions/checkout@v4
 
+      # By default the headers come from the commit this file is at. The github
+      # context describes the caller; job.workflow_* describes this workflow.
+      - name: Resolve the Plugin SDK source
+        id: sdk
+        shell: pwsh
+        env:
+          SDK_REPOSITORY: ${{ inputs.sdk_repository }}
+          SDK_REF: ${{ inputs.sdk_ref }}
+          WORKFLOW_REPOSITORY: ${{ job.workflow_repository }}
+          WORKFLOW_SHA: ${{ job.workflow_sha }}
+        run: |
+          $repository = if ($env:SDK_REPOSITORY) { $env:SDK_REPOSITORY } else { $env:WORKFLOW_REPOSITORY }
+          if (-not $repository) {
+            throw "job.workflow_repository is empty, so the Plugin SDK repository is unknown. Set sdk_repository and sdk_ref."
+          }
+          $ref = $env:SDK_REF
+          if (-not $ref) {
+            if ($repository -ne $env:WORKFLOW_REPOSITORY) {
+              throw "sdk_repository is $repository, not the repository of this workflow. Set sdk_ref too."
+            }
+            if ($env:WORKFLOW_SHA -notmatch '^[0-9a-f]{40}$') {
+              throw "job.workflow_sha is '$env:WORKFLOW_SHA', not a commit sha. Set sdk_ref."
+            }
+            $ref = $env:WORKFLOW_SHA
+          }
+          Write-Host "Plugin SDK headers: $repository at $ref"
+          "repository=$repository" >> $env:GITHUB_OUTPUT
+          "ref=$ref" >> $env:GITHUB_OUTPUT
+
       - name: Checkout Plugin SDK
         uses: actions/checkout@v4
         with:
-          repository: ${{ inputs.sdk_repository }}
-          ref: ${{ inputs.sdk_ref }}
+          repository: ${{ steps.sdk.outputs.repository }}
+          ref: ${{ steps.sdk.outputs.ref }}
           path: plugin-sdk
           submodules: true
 

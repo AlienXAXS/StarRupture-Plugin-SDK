@@ -7,3 +7,4 @@
 - New plugin_waypoint.h: a small window with a label, an arrow that turns with the camera and the distance to a target
 - New item_stack_limits.h: raise item stack sizes (never below an item's own, never items that do not stack) and put them back to vanilla
 - New plugin_go_to_item.h: call the Go to Item plugin from the engine tick to track items and places; GoToItem::GetIfOn() tells you when to hide your Go button
+- The release workflow takes the Plugin SDK headers from the same commit as the workflow itself, so the tag in a plugin's release.yml picks both; sdk_ref still overrides it
