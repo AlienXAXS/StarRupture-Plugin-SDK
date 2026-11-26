@@ -17,7 +17,7 @@ Put `PLUGIN_GAME_BUILT_CL` and `PLUGIN_MAP_MIGRATED` in `PluginInfo`. ExamplePlu
 ```cpp
 static PluginInfo s_pluginInfo = {
     "MyPlugin", "1.0.0", "Your Name", "What this plugin does",
-    PLUGIN_INTERFACE_VERSION, PLUGIN_TARGET_CLIENT,
+    PLUGIN_DECLARED_INTERFACE, PLUGIN_TARGET_CLIENT,
     PLUGIN_GAME_BUILT_CL, PLUGIN_MAP_MIGRATED
 };
 ```

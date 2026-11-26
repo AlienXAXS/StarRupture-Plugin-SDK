@@ -41,7 +41,7 @@ This page takes you from nothing to a plugin DLL that the loader accepts. You ne
 
 ## The interface version
 
-Every plugin declares an interface version in `PluginInfo`: use `PLUGIN_INTERFACE_VERSION`. On `main` the loader accepts versions 70 to 79 (`PLUGIN_INTERFACE_VERSION_MIN` and `_MAX` in `include/plugin_interface.h`).
+Every plugin declares an interface level in `PluginInfo`: fill `interfaceVersion` with `PLUGIN_DECLARED_INTERFACE`. That is `PLUGIN_NEEDS_INTERFACE`, the level your plugin needs; set it in the project's preprocessor definitions, and unset it is 75. Raise it only when the compiler says a member you use needs a higher level. On `main` the loader accepts levels 70 to 80 (`PLUGIN_INTERFACE_VERSION_MIN` and `_MAX` in `include/plugin_interface.h`).
 
 - A plugin built against an older interface still loads. The interface only grows.
 - A plugin that declares a version newer than the loader's maximum is refused, and the Plugins tab says it needs a newer ModLoader.
