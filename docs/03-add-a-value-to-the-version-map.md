@@ -2,7 +2,7 @@
 
 Page 2 reads values by key. Sometimes the key you need has no row yet: a game function nobody asked for before, or a member the game does not describe itself. This page shows how to find the value, check it, and send it to us. We publish the row before your plugin is released, so your plugin can be a multi-version plugin from its first release.
 
-You do not port anything by hand and you do not send a pull request. You send the values, we write and publish the rows.
+You do not port anything by hand and you do not send a pull request. You send the values in an issue, and we write, sign and publish the rows. We sign and publish them from our own pipeline, which is why they do not come in as a pull request.
 
 ## What a row is
 
@@ -87,7 +87,7 @@ The same row added twice changes nothing. A row with other values for the same k
 
 ## Send it to us
 
-1. Open an issue on this repository. Title it with your plugin's name and "version map rows".
+1. Open an issue on the [SDK repository](https://github.com/AlienXAXS/StarRupture-Plugin-SDK/issues). Title it with your plugin's name and "version map rows".
 2. List each key with its kind (function, global, spot, member or struct size).
 3. For each key and build, give what you found: the pattern and RVA, or the offset, size and mask. Say how you checked it (the `sr-aobscan` output or the disassembler address). Say which of the four builds you checked it on.
 4. Say if a key is optional: your plugin runs without it, and turns one feature off.

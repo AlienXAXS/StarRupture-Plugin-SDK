@@ -4,7 +4,7 @@ This page takes you from nothing to a plugin DLL that the loader accepts. You ne
 
 ## Steps
 
-1. Download `dwmapi-Client.dll` (or `dwmapi-Server.dll`, for a server plugin) from the [latest release](../../../releases/latest). It is the loader itself. Rename it `dwmapi.dll` and put it in the game's `Binaries\Win64\` folder, next to `StarRuptureGameSteam-Win64-Shipping.exe`. On Steam that is usually `steamapps\common\StarRupture\StarRupture\Binaries\Win64`.
+1. Download `dwmapi-Client.dll` (or `dwmapi-Server.dll`, for a server plugin) from the [latest release](https://github.com/AlienXAXS/StarRupture-Plugin-SDK/releases/latest). It is the loader itself. Rename it `dwmapi.dll` and put it in the game's `Binaries\Win64\` folder, next to `StarRuptureGameSteam-Win64-Shipping.exe`. On Steam that is usually `steamapps\common\StarRupture\StarRupture\Binaries\Win64`.
 2. Clone this SDK next to your plugin, with its submodule:
 
    ```
@@ -71,6 +71,8 @@ ExamplePlugin runs only on the game build it was compiled for. Page 2 shows what
 
 1. Start the game and open the loader's overlay. The Plugins tab lists your plugin as Loaded, or says why not (Incompatible, needs a newer ModLoader, a key that did not resolve).
 2. Read `ModLoader\Logs\ModLoader.log` for the lines about your plugin.
-3. After a rebuild, install the new DLL and press RELOAD in the overlay instead of restarting the game. A plugin can ask for a restart in its `PluginInfo`; then the overlay says so. [PluginDevelopment.md](../PluginDevelopment.md) lists those settings.
+3. After a rebuild, install the new DLL and press RELOAD in the overlay instead of restarting the game. A plugin can ask for a restart in its `PluginInfo`; then the overlay says so.
+
+   RELOAD works cleanly only when your plugin's shutdown undoes everything it set up (hooks, UI registrations, timers) and the plugin keeps no UObject pointers: fetch objects again each tick, because objects die on travel and on garbage collection. RELOAD assumes that shutdown, callbacks, hooks and resource cleanup are all correct. If your plugin holds a lot of native or graphics (RHI) resources, restarting the game is the safer way to test. [PluginDevelopment.md](../PluginDevelopment.md) lists those settings.
 
 Before you ask anyone for help, include that log.

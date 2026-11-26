@@ -14,6 +14,6 @@ The full API reference is [PluginDevelopment.md](../PluginDevelopment.md). It is
 
 ## Where to ask
 
-- A question about the SDK or this guide: open an issue on this repository.
-- A value your plugin needs that the version map does not have: see [page 3](03-add-a-value-to-the-version-map.md), which says what to send.
-- A problem in the loader itself: open an issue on the [ModLoader repository](https://github.com/AlienXAXS/StarRupture-ModLoader).
+- A question about the SDK, this guide or the loader: ask on [Discord](https://discord.gg/G5a4GYsvrz).
+- A problem with the SDK or this guide (a bug, a missing value row): open an issue on the [SDK repository](https://github.com/AlienXAXS/StarRupture-Plugin-SDK/issues). For value rows, [page 3](03-add-a-value-to-the-version-map.md) says what to send.
+- A problem in the loader itself: tell us on [Discord](https://discord.gg/G5a4GYsvrz). The loader repository has issues turned off.

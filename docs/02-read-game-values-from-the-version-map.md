@@ -55,6 +55,8 @@ Then `PluginMap::ResolveFields(scanner, self, field1, field2, ...)` asks for all
 2. Call `PluginSdkRuntime::Init(self->hooks)` as the first statement of `PluginInit`, and use `PluginSdkRuntime::GetWorld()` in place of `SDK::UWorld::GetWorld()`.
 3. A key that cannot be resolved refuses the plugin. To lose only one part of it, group the keys that part needs in a `PluginMap::Feature` and declare it with `PluginMap::DeclareFeatures` before the calls. A miss then turns that feature off and the plugin still loads. The form is `static PluginMap::Feature s_x{ "id", "Title a player reads", { "Key", ... }, { "Settings.*" } };`. `s_example` in `ExamplePlugin/plugin.cpp` is a working one.
 
+If the shared version map does not have a row you need yet, you can build your feature with plugin-owned rows while you wait: `plugin_version_map.h` builds them into your plugin (see "SDK helpers" in [PluginDevelopment.md](../PluginDevelopment.md)). Those rows move to the shared version map before your plugin's release. A released plugin reads every game value from the shared version map and loads on every current game build, which is what `PLUGIN_MAP_MIGRATED` declares. Page 3 shows how to send us the rows.
+
 Most members are reflected, so the loader reads their offset from the running game and a row is only a cross-check. A member that reflection does not describe (a plain C++ type) is called native. It needs a row for every build, and the flag `PLUGIN_FIELD_NATIVE`.
 
 ## Choosing a size or layout by build

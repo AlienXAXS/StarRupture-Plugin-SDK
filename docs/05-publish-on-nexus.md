@@ -12,7 +12,11 @@ The Nexus page is yours. You make it, you write its text and you keep it up to d
 
 ## What the release workflow makes
 
+The release workflow is a suggestion, and it is optional. A plugin that already has its own workflow, versioning and Nexus description can keep them.
+
 Copy `templates/release.yml` from this repository to `.github/workflows/release.yml` in your plugin repo, fill in the `TODO` values, and pin the SDK release tag. Run it from the Actions tab. Tick **dry_run** first: it builds and packages everything and publishes nothing.
+
+Warning: when `nexus_mod_id` is set and the description file exists (by default `nexus/description.bbcode`), a release replaces your Nexus page description with that file. To keep a description you wrote by hand on Nexus, leave `nexus_mod_id` unset (the workflow then skips Nexus completely and you upload by hand), or do not keep that file in your repo (the workflow then leaves the page description as it is and still uploads the file, version and changelog).
 
 A run makes:
 
@@ -65,10 +69,11 @@ You do:
 - your Nexus page and its text,
 - the upload to your own Nexus page, with your own secrets.
 
-Ask us on an issue in this repository for:
+Ask us in an issue on the [SDK repository](https://github.com/AlienXAXS/StarRupture-Plugin-SDK/issues) for:
 
-- version map rows your plugin needs (page 3),
-- a Browse entry (page 4).
+- version map rows your plugin needs (page 3).
+
+A Browse entry (page 4) is not an issue: you send it as a pull request on the loader repository.
 
 ## Worked example: the next-release text for KeepTicking
 

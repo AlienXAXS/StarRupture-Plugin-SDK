@@ -24,7 +24,7 @@ Making one DLL run on every game build? Start with [MultiVersionGuide.md](MultiV
 
 ## Quick start
 
-1. **Download `dwmapi.dll`** from the [latest release](../../releases/latest) — pick Client or Server depending on your target
+1. **Download `dwmapi.dll`** from the [latest release](https://github.com/AlienXAXS/StarRupture-Plugin-SDK/releases/latest) — pick Client or Server depending on your target
 2. **Clone this repo** with `git clone --recursive`, so the `StarRupture SDK` submodule comes with it
 3. **Copy `ExamplePlugin/` to a new folder**, rename it, and update the project name/GUID in the `.vcxproj`
 4. **Add your project to `StarRupture-Plugin-SDK.sln`** (or create your own `.sln`)
@@ -59,7 +59,7 @@ Network channel (`hooks->Network`) is available on both client and server builds
 
 ## Runtime DLL
 
-`dwmapi.dll` is the modloader itself. It is **not** built from this repo. Pre-built binaries are attached to each [release](../../releases/latest).
+`dwmapi.dll` is the modloader itself. It is **not** built from this repo. Pre-built binaries are attached to each [release](https://github.com/AlienXAXS/StarRupture-Plugin-SDK/releases/latest).
 
 Do **not** fork or build the main modloader repo just to develop a plugin — this SDK repo is the intended starting point.
 

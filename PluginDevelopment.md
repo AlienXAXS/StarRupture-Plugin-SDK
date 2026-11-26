@@ -1,6 +1,6 @@
 # Plugin Development Guide -- StarRupture ModLoader
 
-> End-user documentation is in [README.md](README.md) and [How To Use](How%20To%20Use.md).
+> End-user documentation is in [README.md](README.md) and [How To Use](https://github.com/AlienXAXS/StarRupture-ModLoader/blob/main/README.md).
 
 > **Building a plugin?** Use the [StarRupture-Plugin-SDK](https://github.com/AlienXAXS/StarRupture-Plugin-SDK) repo — it contains the headers, UE5 SDK, ExamplePlugin template, and pre-built `dwmapi.dll` releases. You do **not** need to fork or build the modloader itself.
 
@@ -1416,7 +1416,8 @@ is a substring of the flagged text. A reviewer approves each new entry.
 
 Send us the `Class::Member` list (and the function names) your plugin uses, and we publish the rows
 in the version map before your release. The version map goes out on its own, so no loader release is
-needed. To send the list, open an issue on this repository.
+needed. To send the list, open an issue on the
+[SDK repository](https://github.com/AlienXAXS/StarRupture-Plugin-SDK/issues). We write, sign and publish the rows; there is no pull request for them.
 
 Until the rows are there, your plugin can carry its own: `plugin_version_map.h` builds your rows from
 `version_map.generated.h` into the plugin, and the loader uses its shared row first and your
