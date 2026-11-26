@@ -2277,7 +2277,7 @@ The target name and the tag are 1 to 256 bytes with no control characters. A tar
 
 The sender's version is not checked, so put your own protocol version in the data. One check can still drop a message after a `1`: if the client also has a plugin with the target's name, at a version the ModLoader does not pair with the server's copy, the server drops what that client sends it.
 
-The lists behind `-1` can briefly be out of date. A server with these sends sends its list again about a second after its plugins change (a reload, a late load or an unload). An older server sends its list only when the client reports, so there a plugin it loaded later gives `-1` until then (a rejoin does that). A very long plugin list can be cut short, and a plugin left out of it gives `-1`. A server on an older ModLoader may send no list, and then the call returns `1`.
+The lists behind `-1` can briefly be out of date. From v83 a server sends its list again about a second after its plugins change (a reload, a late load or an unload). An older server sends its list only when the client reports, so there a plugin it loaded later gives `-1` until then (a rejoin does that). A very long plugin list can be cut short, and a plugin left out of it gives `-1`. A server on an older ModLoader may send no list, and then the call returns `1`.
 
 
 **Optional: `GetPluginWireInfo`.** Packets only flow between copies of a plugin that have the same version string. If you release a new version whose packet layout did not change, export `GetPluginWireInfo` so the older copy keeps receiving your data. Without it, versions must match exactly. Example: version 0.12.0 has the same layout as 0.11.0, so it lists 0.11.0:
