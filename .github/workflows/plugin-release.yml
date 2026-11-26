@@ -132,7 +132,8 @@ jobs:
           if (-not $repository) {
             throw "job.workflow_repository is empty, so the Plugin SDK repository is unknown. Set sdk_repository and sdk_ref."
           }
-          $ref = $env:SDK_REF
+          # checkout trims the ref and takes the default branch for an empty one.
+          $ref = "$env:SDK_REF".Trim()
           if (-not $ref) {
             if ($repository -ne $env:WORKFLOW_REPOSITORY) {
               throw "sdk_repository is $repository, not the repository of this workflow. Set sdk_ref too."
@@ -415,7 +416,7 @@ jobs:
               Write-Host "$Variant plugin declares PLUGIN_NEEDS_INTERFACE=$need ($($release[0].Where))."
             }
             elseif ($converted) {
-              if ($null -eq $hdrBase) { throw "The plugin uses PLUGIN_DECLARED_INTERFACE but plugin_interface.h has no PLUGIN_INTERFACE_BASELINE. Use a newer sdk_ref." }
+              if ($null -eq $hdrBase) { throw "The plugin uses PLUGIN_DECLARED_INTERFACE but plugin_interface.h has no PLUGIN_INTERFACE_BASELINE. Use a newer SDK tag in uses:, or a newer sdk_ref." }
               $need = $hdrBase
               Write-Host "PLUGIN_NEEDS_INTERFACE not set: using the baseline $need."
             }
