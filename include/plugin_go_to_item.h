@@ -37,9 +37,9 @@
 //   - Call GoToItem::Get() right before each use. Never keep the table, or any
 //     pointer it returns, past that use.
 //   - Treat null as "GoToItem is not there".
-//   - GoToItem lets calls already in progress finish and refuses new ones while
-//     it shuts down. The loader waits for every plugin's draw callbacks in
-//     progress before it frees a DLL, which closes the rest.
+//   - GoToItem lets calls already in progress finish before it unloads. A call
+//     that starts during the unload itself is not covered, which is why you
+//     call Get() right before each use and never keep the table.
 //
 // Needs interface 77 (the item icons use hooks->Images); a loader without
 // images still gets every call here, the pins just draw the coloured circle.
@@ -78,7 +78,7 @@ enum GoToResult : int32_t
 	GOTO_FEATURE_OFF        = -3,  // the version map group for lookup is off on this game build
 	GOTO_TRACKED_LIMIT      = -4,  // GOTOITEM_MAX_TRACKED_ITEMS reached (untrack one first)
 	GOTO_NOT_TRACKED        = -5,
-	GOTO_UNKNOWN_SOURCE     = -6,  // source key not in that item's list
+	GOTO_UNKNOWN_SOURCE     = -6,  // no longer returned by SelectSource; kept so the numbers stay put
 	GOTO_NOT_READY          = -7,  // no world yet / not initialised
 	GOTO_BAD_ARGUMENT       = -8,
 };
@@ -187,9 +187,8 @@ struct GoToItemApi
 	// --- nearest + picker -----------------------------------------------------
 	// sourceKey == 0 returns the item to "nearest" mode. A non-zero key pins the
 	// primary target to that source; every source is still marked on the map.
-	// GOTO_UNKNOWN_SOURCE if the key is not in the item's list. The exception is
-	// a remote client (a joined game), whose list comes from the server and may
-	// not have arrived yet: a key not listed yet is accepted (GOTO_OK), held, and
+	// A key that is not in the item's list yet (a base not seen so far, or a
+	// joined client whose list has not arrived) is accepted (GOTO_OK), kept, and
 	// picked once its source appears; until then the item shows its nearest.
 	int32_t (*SelectSource)(const char* itemKey, uint64_t sourceKey);
 
