@@ -233,6 +233,8 @@ int main()
 	printf("the does-not-stack value\n");
 	{
 		ResolveBothRows();
+		// The lookup with no enum walks the whole table, so drop earlier items.
+		UObject::GObjects.Objects.clear();
 		UAuItemDataBase a, b;
 		Place(a, 1, 50, ENxItemStackType::DoNotStack);   // the compiled number
 		Place(b, 2, 20, static_cast<ENxItemStackType>(5));
