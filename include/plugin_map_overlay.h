@@ -14,7 +14,7 @@
 //
 // Version map keys: the rows in PluginMapOverlay::Fields, already served by
 // the loader's map (BetterDrone resolves the same ones). In OnPluginLoadHooks:
-//   PluginMapOverlay::Resolve(scanner, self);            // false = a key missed
+//   PluginMapOverlay::Resolve(self, scanner);            // false = a key missed
 //   static PluginMap::Feature s_map{ "map-marks", "Marks on the map",
 //       PluginMapOverlay::KeysWith(/* your own keys */), {} };
 // In PluginInit / PluginShutdown: PluginMapOverlay::Init(self) / Shutdown(self).
@@ -49,9 +49,9 @@
 #include <windows.h>
 
 #define PLUGIN_MAP_OVERLAY_FIELD(Class, Member) \
-	PluginField<decltype(SDK::Class::Member)>{ { #Class "::" #Member, #Class, #Member, 0, \
-	                                             sizeof(decltype(SDK::Class::Member)), \
-	                                             static_cast<int32_t>(offsetof(SDK::Class, Member)) } }
+	SR_FIELD(decltype(SDK::Class::Member), Class, Member, 0)
+// SR_FIELD_ANY_SIZE gives an untyped PluginFieldSpec; the overlay's rows are
+// typed PluginField<T>, so the next one stays.
 #define PLUGIN_MAP_OVERLAY_FIELD_ANY_SIZE(Class, Member) \
 	PluginField<decltype(SDK::Class::Member)>{ { #Class "::" #Member, #Class, #Member, PLUGIN_FIELD_ANY_SIZE, 0, \
 	                                             static_cast<int32_t>(offsetof(SDK::Class, Member)) } }
@@ -471,6 +471,10 @@ namespace PluginMapOverlay
 	// Game thread, once per tick. Fills `out`, valid only when the status is
 	// Ready, and leaves it all zero otherwise. Hide the overlay on anything but
 	// Ready. With Mismatch, `checked` markers were compared and none agreed.
+	// Call it only while the Feature built from KeysWith is On(): when the
+	// marker rows are unresolved but the transform rows are, Sample can return
+	// Ready with nothing checked (`checked` is 0), so it is fail-closed only
+	// behind that Feature check.
 	inline Result Sample(Snapshot* out)
 	{
 		*out = Snapshot{};

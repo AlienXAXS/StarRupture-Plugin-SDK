@@ -19,7 +19,11 @@
 //     function pointers at the end of GoToItemApi; nothing moves or changes;
 //   - the caller provides every output buffer; strings are copied and always
 //     NUL-terminated (truncated if the buffer is small);
-//   - items are named by UAuItemDataBase::UniqueItemName.
+//   - items are named by an item key: UAuItemDataBase::UniqueItemName, or,
+//     when that is empty or "None" (ammo, blueprint items), the item's class
+//     name without the trailing "_C". Pass the key as GoToItem reports it, or
+//     build it the same way; the raw UniqueItemName alone does not match those
+//     items.
 //
 // Threads: every function is callable from ANY thread (a button click runs on
 // the render thread). Changes are queued and applied on the game thread, where
@@ -28,11 +32,14 @@
 // tick, so values are at most one tick old. Counts and lists are consistent
 // with GetChangeCounter() read just before.
 //
-// Hot RELOAD: the loader unloads and reloads a plugin DLL without telling the
-// other plugins, so the function table can vanish between two calls. Call
-// GoToItem::Get() every time you use the API and never keep the pointer past
-// the current callback. Get() looks the module up again and checks the version
-// on every call, which is cheap.
+// Hot RELOAD: the loader can unload and reload GoToItem.dll without telling
+// the other plugins, so the function table can vanish between two calls.
+//   - Call GoToItem::Get() right before each use. Never keep the table, or any
+//     pointer it returns, past that use.
+//   - Treat null as "GoToItem is not there".
+//   - GoToItem lets calls already in progress finish and refuses new ones while
+//     it shuts down. The loader waits for every plugin's draw callbacks in
+//     progress before it frees a DLL, which closes the rest.
 //
 // Needs interface 77 (the item icons use hooks->Images); a loader without
 // images still gets every call here, the pins just draw the coloured circle.
@@ -223,10 +230,13 @@ namespace GoToItem
 	typedef const GoToItemApi* (*GetApiFn)(uint32_t wantedVersion);
 
 	// The function table, or null when GoToItem is not loaded, does not export
-	// the lookup, or cannot serve GOTOITEM_API_VERSION. Looks the module up on
-	// every call (see "Hot RELOAD" above): do not cache the result across
-	// callbacks. Null means: hide the Go button, and say in its tooltip that the
-	// GoToItem plugin is needed.
+	// the lookup, or cannot serve API version 1. Asks for version 1, the
+	// oldest this wrapper can use, so a caller built against a newer header
+	// still gets the table from an older GoToItem.dll. Check members added
+	// after version 1 with GOTOITEM_HAS before calling them. Looks the module
+	// up on every call (see "Hot RELOAD" above): do not cache the result. Null
+	// means: hide the Go button, and say in its tooltip that the GoToItem
+	// plugin is needed.
 	inline const GoToItemApi* Get()
 	{
 		static const char* const kModules[] = { "GoToItem.dll", "StarRupture-ModLoader-Core.dll" };
@@ -238,8 +248,8 @@ namespace GoToItem
 			GetApiFn fn = reinterpret_cast<GetApiFn>(GetProcAddress(module, GOTOITEM_EXPORT_NAME));
 			if (!fn)
 				continue;
-			const GoToItemApi* api = fn(GOTOITEM_API_VERSION);
-			if (api && api->version >= 1 && api->size >= offsetof(GoToItemApi, ResultToString) + sizeof(void*))
+			const GoToItemApi* api = fn(1);
+			if (api && api->size >= offsetof(GoToItemApi, ResultToString) + sizeof(void*))
 				return api;
 		}
 		return nullptr;
