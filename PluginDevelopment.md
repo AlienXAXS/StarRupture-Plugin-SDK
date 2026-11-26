@@ -2239,6 +2239,45 @@ if (g_self->hooks->Network) {
 
 Packets are routed by plugin name (from `self->name`) and type tag, so different plugins cannot accidentally receive each other's packets.
 
+#### Sending to another plugin (interface 83)
+
+The sends above reach your own plugin on the other side. Two more name the plugin the message is for, so a client-only plugin can talk to a server plugin with a different name.
+
+| Accessor | Call it on | Reaches |
+|---|---|---|
+| `PluginOptSendToServerPlugin(network)` | the client | a plugin on the server |
+| `PluginOptSendToClientPlugin(network)` | the server (or host) | a plugin on one player's client |
+
+Each returns `nullptr` on an older ModLoader, so turn the feature off then. To use them and still load on older loaders, set `PLUGIN_OPTIONAL_INTERFACE=83` in your project, add `PLUGIN_EXPORT_HOST_INFO()` to one source file, and reach them only through the accessors.
+
+```cpp
+void AskOtherPlugin(const char* text)   // client, from your Tick
+{
+    auto send = PluginOptSendToServerPlugin(g_self->hooks->Network);
+    if (!send) return;                  // this ModLoader is too old
+
+    const int result = send(g_self, "OtherPlugin", "myplugin.ask",
+                            reinterpret_cast<const uint8_t*>(text), strlen(text));
+    if (result == -1)
+        g_self->logger->Info(g_self->name, "The server does not have OtherPlugin.");
+}
+```
+
+The receiver changes nothing: it registers a handler as usual, and the handler's plugin name is its own. The loader does not say which plugin sent the message, so put that in the data if the receiver needs it. Treat what arrives as untrusted. To reply, send to the first plugin by name with the other accessor.
+
+| Result | Meaning |
+|---|---|
+| `1` | Queued. It does not say the other plugin handled it. |
+| `0` | Not ready: no connection, the server or that player's client has not finished reporting, or the send failed. Try again later. |
+| `-1` | The other side's plugin list does not have that plugin. |
+| `-2` | Bad arguments (see below), including a null player controller. |
+| `-3` | Called on the wrong side. |
+
+The target name and the tag are 1 to 256 bytes with no control characters. A target name also cannot hold `:` or start with `$`. The data is at most 65536 bytes and may be empty (`data` can then be null; the handler gets size 0). Keep messages under about 1400 bytes where you can. Call these from the same place you call the other sends, such as your Tick.
+
+No versions are compared against the sending plugin, so put your own protocol version in the data. The lists behind `-1` can be out of date: the server's list is the one it sent when the client last reported, so a plugin the server loaded after that gives `-1` until the client reports again (a rejoin does that). A very long plugin list can be cut short too. A server on an older ModLoader may send no list, and then the call returns `1`.
+
+
 **Optional: `GetPluginWireInfo`.** Packets only flow between copies of a plugin that have the same version string. If you release a new version whose packet layout did not change, export `GetPluginWireInfo` so the older copy keeps receiving your data. Without it, versions must match exactly. Example: version 0.12.0 has the same layout as 0.11.0, so it lists 0.11.0:
 
 ```cpp
@@ -3342,6 +3381,7 @@ The loader refuses a plugin only when its declared `interfaceVersion` is above t
 | v78     | no          | **Bulk textured triangles (ModLoader 1.25.0 or newer).** Appended `DL_AddTexturedTriangles` and its `PluginDrawVertex`, `PluginDrawIndex` and `PluginDrawResult` types to `IModLoaderImGui` without changing the existing table prefix. See the direct draw list section above for its batch, texture, buffer and callback requirements. Plugins declaring 78 are rejected by older loaders, including 1.24.0. Plugins not using v78 features may deliberately declare 77 (including for image-library use) or 75 (when they use neither v77 nor v78 features). MIN remains 70. |
 | v79     | no          | **Host rules (ModLoader 1.27.0 or newer).** `IPluginHooks` gained `HostRules` (`IPluginHostRules`), appended after `Images`: a server plugin decides, player by player, which mod features a client may use. Below 79 the pointer does not exist, so a plugin that uses it declares 79. MIN remains 70. |
 | v80     | no          | **Registry, server address, and the optional host-info export (ModLoader 1.28.0 or newer).** `IPluginHooks` gained `Registry` (`IPluginRegistry`: `GetPluginVersion`, `GetDeclaredFeatures`, `GetFeatureCatalog`) after `HostRules`, and `IPluginNetworkChannel` gained `GetServerAddress` after `UnregisterServerReadyCallback`. A new optional export, `PluginSetHostInfo` (`PLUGIN_EXPORT_HOST_INFO()`), lets the loader tell a plugin its own level; with `PLUGIN_OPTIONAL_INTERFACE` and the `PluginOpt...` accessors a plugin that declares a lower need can use these members when the loader has them. See the README, "A newer member only when the loader has it". MIN remains 70. |
+| v83     | no          | **Sends that name their target plugin.** `SendPacketToServerPlugin` and `SendPacketToClientPlugin`, appended to `IPluginNetworkChannel`; reach them with `PluginOptSendToServerPlugin` and `PluginOptSendToClientPlugin`. |
 
 The current `PLUGIN_INTERFACE_VERSION_MIN` is **70** and `PLUGIN_INTERFACE_VERSION_MAX` is **80** (see `plugin_interface.h` for the authoritative value and full per-version changelog comments).
 
