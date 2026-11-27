@@ -47,10 +47,11 @@
 //     ModLoader, which does not wait for these calls.
 //   - A GoToItem the loader shows as "Shut down" has had its PluginShutdown but
 //     is not freed yet: a call was still running when the wait to free it ran
-//     out. The loader has removed what it registered and no longer calls into
-//     it. Get() can still return its table, and what the table answers then is
-//     up to GoToItem. A later UNLOAD or RELOAD can free it, so the rule above
-//     about one loader callback still applies.
+//     out. The loader has removed what it had registered by then. A call that
+//     was still running can register or post things afterwards, and those can
+//     still reach it until it is freed. Get() can still return its table, and
+//     what the table answers then is up to GoToItem. A later UNLOAD or RELOAD
+//     can free it, so the rule above about one loader callback still applies.
 //   - A UI or draw callback can run off the game thread, so never call from one,
 //     on any ModLoader: a DLL that stays loaded does not make such a call safe.
 //     Store the click, act on it in your tick, and have the tick publish (in an
