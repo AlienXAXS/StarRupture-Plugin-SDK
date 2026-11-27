@@ -1349,6 +1349,63 @@ only if it is interface v72 or later, sets `PLUGIN_MAP_MIGRATED` and calls `GetS
 `PluginInit`; otherwise it is listed as **Incompatible**. The rule, with the cases for a plugin before
 v72 and for a tail that names no build, is in [Admission](https://github.com/AlienXAXS/StarRupture-ModLoader/blob/main/VersionMap.md#admission).
 
+#### When a server turns your plugin off
+
+A server you join can turn a client plugin off as a whole (`IsDeniedByHost` reads 1). From interface
+83, while that lasts, the loader skips the plugin's function hooks (`Hooks->Install`) and does not
+call its `IPluginDelegateHook::Hook` callbacks. A call goes to the next hook on that function that is
+not skipped, or to the game's function if there is none. The same happens when your own detour calls
+its original. Preload hooks are never skipped. Declaring features does not change any of this. A call
+already inside your detour on another thread finishes it.
+
+By default you need to do nothing. Set `PLUGIN_HANDLES_HOST_DENY` in `PluginInfo::mapFlags` only
+when your hooks cannot be skipped, for example two hooks that work as a pair, or a patch that is only
+right while a detour runs. With the flag your hooks keep running, and you promise that while the
+plugin is turned off nothing they do changes the game:
+
+- every hook checks the plugin's own state: its feature is off, or `IsDeniedByHost` reads 1. It then
+  only calls the original and returns its result;
+- what the plugin had already changed is undone, and comes back when the server allows it again.
+
+The skip covers only those hooks. Byte patches (`Patch`, `Nop`), direct memory writes, vtable swaps,
+hooks made without the loader, your own threads and ticks are all left alone, so undo or stop them
+yourself. Ticks and loader events keep firing, which gives you the place to do it.
+
+After the server allows the plugin again (or you leave), your hooks may have missed calls. If you
+keep state from calls, such as a matched begin and end, read it again or reset it.
+
+A loader older than 83 ignores the flag and never skips hooks. The flag needs no higher declared
+interface.
+
+Example: a plugin whose damage hook must keep running. It reads the deny state through the accessor
+(see the README, "A newer member only when the loader has it"), so it needs
+`PLUGIN_OPTIONAL_INTERFACE` 82 or higher.
+
+```cpp
+PLUGIN_EXPORT_HOST_INFO()
+
+static PluginInfo s_pluginInfo = {
+    "MyPlugin", "1.0.0", "Your Name", "What this plugin does",
+    PLUGIN_DECLARED_INTERFACE, PLUGIN_TARGET_CLIENT,
+    PLUGIN_GAME_BUILT_CL,
+    PLUGIN_MAP_MIGRATED | PLUGIN_HANDLES_HOST_DENY
+};
+
+static bool TurnedOffByServer()
+{
+    auto isDenied = PluginOptHostDenied(g_self->hooks->Network);
+    return isDenied && isDenied(g_self) == 1;   // safe from any thread
+}
+
+static float MyDamageDetour(void* target, float amount)
+{
+    if (TurnedOffByServer())
+        return g_originalDamage(target, amount);       // change nothing
+
+    return g_originalDamage(target, amount * 2.0f);
+}
+```
+
 #### The function table
 
 | Function | Notes |
@@ -3383,9 +3440,11 @@ The loader refuses a plugin only when its declared `interfaceVersion` is above t
 | v78     | no          | **Bulk textured triangles (ModLoader 1.25.0 or newer).** Appended `DL_AddTexturedTriangles` and its `PluginDrawVertex`, `PluginDrawIndex` and `PluginDrawResult` types to `IModLoaderImGui` without changing the existing table prefix. See the direct draw list section above for its batch, texture, buffer and callback requirements. Plugins declaring 78 are rejected by older loaders, including 1.24.0. Plugins not using v78 features may deliberately declare 77 (including for image-library use) or 75 (when they use neither v77 nor v78 features). MIN remains 70. |
 | v79     | no          | **Host rules (ModLoader 1.27.0 or newer).** `IPluginHooks` gained `HostRules` (`IPluginHostRules`), appended after `Images`: a server plugin decides, player by player, which mod features a client may use. Below 79 the pointer does not exist, so a plugin that uses it declares 79. MIN remains 70. |
 | v80     | no          | **Registry, server address, and the optional host-info export (ModLoader 1.28.0 or newer).** `IPluginHooks` gained `Registry` (`IPluginRegistry`: `GetPluginVersion`, `GetDeclaredFeatures`, `GetFeatureCatalog`) after `HostRules`, and `IPluginNetworkChannel` gained `GetServerAddress` after `UnregisterServerReadyCallback`. A new optional export, `PluginSetHostInfo` (`PLUGIN_EXPORT_HOST_INFO()`), lets the loader tell a plugin its own level; with `PLUGIN_OPTIONAL_INTERFACE` and the `PluginOpt...` accessors a plugin that declares a lower need can use these members when the loader has them. See the README, "A newer member only when the loader has it". MIN remains 70. |
-| v83     | no          | **Sends that name their target plugin.** `SendPacketToServerPlugin` and `SendPacketToClientPlugin`, appended to `IPluginNetworkChannel`; reach them with `PluginOptSendToServerPlugin` and `PluginOptSendToClientPlugin`. |
+| v81     | no          | **Host rules state.** `IPluginNetworkChannel::GetHostRulesState`, appended after `GetServerAddress`: whether the joined server's rule set is in effect on the plugins' feature flags. Reach it with `PluginOptHostRulesState`. |
+| v82     | no          | **Denied by the host.** `IPluginNetworkChannel::IsDeniedByHost`, appended after `GetHostRulesState`: whether the joined server has turned this plugin off as a whole. Reach it with `PluginOptHostDenied`. |
+| v83     | no          | **Sends that name their target plugin, and a hook flag.** `SendPacketToServerPlugin` and `SendPacketToClientPlugin`, appended to `IPluginNetworkChannel`; reach them with `PluginOptSendToServerPlugin` and `PluginOptSendToClientPlugin`. Also the `PluginInfo::mapFlags` bit `PLUGIN_HANDLES_HOST_DENY`: while a server has a plugin turned off as a whole, the loader skips its hooks unless it sets the bit. See [When a server turns your plugin off](#when-a-server-turns-your-plugin-off). |
 
-The current `PLUGIN_INTERFACE_VERSION_MIN` is **70** and `PLUGIN_INTERFACE_VERSION_MAX` is **80** (see `plugin_interface.h` for the authoritative value and full per-version changelog comments).
+The current `PLUGIN_INTERFACE_VERSION_MIN` is **70** and `PLUGIN_INTERFACE_VERSION_MAX` is **83** (see `plugin_interface.h` for the authoritative value and full per-version changelog comments).
 
 A plugin declares **`PLUGIN_DECLARED_INTERFACE`**, which is the level set by `PLUGIN_NEEDS_INTERFACE` in its project (75 when unset). The header hides every member above that level, so the compiler tells you when a member needs a newer ModLoader: ModLoader 1.24.0 or newer for 77 (image library), 1.25.0 for 78, 1.27.0 for 79; older loaders reject a plugin declaring more than their own maximum. A plugin that uses nothing above 75 loads on ModLoader 1.23.0 and later.
 
