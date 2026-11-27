@@ -42,9 +42,13 @@
 //     plugin is still running. So Get() followed by use of the table inside the
 //     same loader callback (your tick, a loader event, a PostToGameThread task)
 //     cannot hit a freed GoToItem.
-//   - Not safe: a table kept between callbacks, calls from threads you start or
-//     from your own detours (the loader does not see them), and any older
-//     ModLoader, which does not wait for these calls.
+//   - ModLoader v1.22.0 and later run RELOAD on the game thread, so on them too
+//     game-thread code that takes the table and uses it right away cannot be
+//     cut off. Older ones ran the overlay RELOAD button on the render thread,
+//     so on them any call can be.
+//   - Not safe on any ModLoader: a table kept between callbacks, and a call made
+//     off the game thread, from a thread you start or a detour that runs there
+//     (the loader does not see these calls, so it does not wait for them).
 //   - A GoToItem the loader shows as "Shut down" has had its PluginShutdown but
 //     is not freed yet: a call was still running when the wait to free it ran
 //     out. The loader has removed what it had registered by then. A call that
