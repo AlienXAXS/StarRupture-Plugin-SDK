@@ -37,17 +37,24 @@
 // Threads and RELOAD: use everything here from the GAME THREAD ONLY (your engine
 // tick), Get() and GetIfOn() included.
 //   - The loader can unload and reload GoToItem.dll without telling the other
-//     plugins, and it does not wait for another plugin's call to finish first.
-//     ModLoader v1.22.0 and later reload on the game thread, so game-thread code
-//     that takes the table and uses it right away cannot be cut off. A call from
-//     any other thread can be, and so can any call on an older ModLoader, which
-//     ran the overlay RELOAD button on the render thread.
-//   - So never call from a UI or draw callback. Store the click, act on it in
-//     your tick, and have the tick publish (in an atomic) whether the UI shows
-//     the button. See the worked example.
+//     plugins.
+//   - ModLoader 1.28.0 frees no plugin DLL while a call the loader made into any
+//     plugin is still running. So Get() followed by use of the table inside the
+//     same loader callback (your tick, a loader event, a PostToGameThread task)
+//     cannot hit a freed GoToItem.
+//   - Not safe: a table kept between callbacks, calls from threads you start or
+//     from your own detours (the loader does not see them), and any older
+//     ModLoader, which does not wait for these calls.
+//   - A GoToItem the loader shows as "Shut down" has had its PluginShutdown but
+//     is not freed yet, so Get() can still return its table.
+//   - A UI or draw callback can run off the game thread, so never call from one,
+//     on any ModLoader: a DLL that stays loaded does not make such a call safe.
+//     Store the click, act on it in your tick, and have the tick publish (in an
+//     atomic) whether the UI shows the button. See the worked example.
 //   - Take the table again for each use. Never keep it, or any pointer it
-//     returns (ResultToString's text too), past the current tick: after a RELOAD
-//     it points into a DLL that is gone. Copy text you need to show later.
+//     returns (ResultToString's text too), after the callback you got it in
+//     returns: after a RELOAD it points into a DLL that is gone. Copy text you
+//     need to show later.
 //   - A place key (TrackPlace) is never given out twice while the game runs, a
 //     RELOAD of GoToItem included, so a key you kept can never close a newer
 //     place. An implementation must keep this.
@@ -77,9 +84,9 @@
 // TrackItem, UntrackItem, IsTracked, SelectSource, SetItemColor and every
 // version-2 function. So IsTracked and IsTrackedTarget are NOT yes/no answers:
 // GOTO_OFF is non-zero. Compare their value with 1. The other functions cannot
-// report that GoToItem is off, so never use them to detect it, and ClearTracked
-// may still clear the set. GetIfOn() asks IsTrackedTarget. A version-1 GoToItem
-// has no off state.
+// report that GoToItem is off, so never use them to detect it. ClearTracked does
+// nothing while off: it writes no config and keeps the tracked set. GetIfOn()
+// asks IsTrackedTarget. A version-1 GoToItem has no off state.
 
 #include <cstdint>
 #include <cstddef>
@@ -255,7 +262,7 @@ struct GoToItemApi
 	// Remove one item (its map marks and screen pins disappear). Result
 	// GOTO_NOT_TRACKED if it was not tracked.
 	int32_t (*UntrackItem)(const char* itemKey);
-	// Remove all items.
+	// Remove all items. Does nothing while turned off.
 	void    (*ClearTracked)();
 	// 1 if tracked, 0 if not, GOTO_OFF while turned off. NOT a yes/no answer:
 	// test IsTracked(key) == 1, because any other non-zero value is not "tracked".
