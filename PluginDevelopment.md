@@ -1371,6 +1371,11 @@ The skip covers only those hooks. Byte patches (`Patch`, `Nop`), direct memory w
 hooks made without the loader, your own threads and ticks are all left alone, so undo or stop them
 yourself. Ticks and loader events keep firing, which gives you the place to do it.
 
+Because your ticks keep running while your hooks are skipped, hooks that work in pairs (begin and
+end, allocate and free, lock and unlock), or a hook that clears something a later tick uses, can
+leave your plugin broken. If you have such hooks, set the flag and check your own feature state
+inside each hook.
+
 After the server allows the plugin again (or you leave), your hooks may have missed calls. If you
 keep state from calls, such as a matched begin and end, read it again or reset it.
 
