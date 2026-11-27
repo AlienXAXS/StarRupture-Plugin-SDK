@@ -46,7 +46,11 @@
 //     from your own detours (the loader does not see them), and any older
 //     ModLoader, which does not wait for these calls.
 //   - A GoToItem the loader shows as "Shut down" has had its PluginShutdown but
-//     is not freed yet, so Get() can still return its table.
+//     is not freed yet: a call was still running when the wait to free it ran
+//     out. The loader has removed what it registered and no longer calls into
+//     it. Get() can still return its table, and what the table answers then is
+//     up to GoToItem. A later UNLOAD or RELOAD can free it, so the rule above
+//     about one loader callback still applies.
 //   - A UI or draw callback can run off the game thread, so never call from one,
 //     on any ModLoader: a DLL that stays loaded does not make such a call safe.
 //     Store the click, act on it in your tick, and have the tick publish (in an
@@ -103,8 +107,8 @@
 // Limits (enforced by the implementation; the numbers are in the API struct
 // so callers read them instead of hard-coding)
 // ---------------------------------------------------------------------------
-#define GOTOITEM_MAX_TRACKED_ITEMS      7   // one colour each, see GoToItemApi::GetItemColor
-#define GOTOITEM_MAX_SOURCES_PER_ITEM  16   // sources kept and marked on the map per item
+#define GOTOITEM_MAX_TRACKED_ITEMS      7   // the fewest a provider allows; colours repeat after 7
+#define GOTOITEM_MAX_SOURCES_PER_ITEM  16   // most sources a list call returns per item
 #define GOTOITEM_MAX_SCREEN_PER_ITEM    3   // nearest sources drawn on screen per item
 #define GOTOITEM_KEY_CHARS             96   // UniqueItemName buffer, incl. NUL
 #define GOTOITEM_NAME_CHARS            64   // display names, incl. NUL
@@ -130,7 +134,7 @@ enum GoToResult : int32_t
 	GOTO_UNKNOWN_ITEM       = -1,  // name not a known item (empty, or not in the item catalog)
 	GOTO_NO_LOCATION_YET    = -2,  // item known, no producing base known yet (CanTrack only; TrackItem accepts it)
 	GOTO_FEATURE_OFF        = -3,  // item lookup is off on this game build (version map)
-	GOTO_TRACKED_LIMIT      = -4,  // GOTOITEM_MAX_TRACKED_ITEMS reached (untrack one first)
+	GOTO_TRACKED_LIMIT      = -4,  // the provider's cap (GoToItemApi::maxTrackedItems) reached (untrack one first)
 	GOTO_NOT_TRACKED        = -5,
 	GOTO_UNKNOWN_SOURCE     = -6,  // no longer returned by SelectSource; kept so the numbers stay put
 	GOTO_NOT_READY          = -7,  // no world yet / not initialised
@@ -232,7 +236,7 @@ struct GoToItemApi
 {
 	uint32_t size;                  // sizeof(GoToItemApi) as the implementation built it
 	uint32_t version;               // GOTOITEM_API_VERSION the implementation serves
-	uint32_t maxTrackedItems;       // = GOTOITEM_MAX_TRACKED_ITEMS in the implementation
+	uint32_t maxTrackedItems;       // the live cap, at least GOTOITEM_MAX_TRACKED_ITEMS
 	uint32_t maxSourcesPerItem;     // = GOTOITEM_MAX_SOURCES_PER_ITEM in the implementation
 
 	// --- change detection ---------------------------------------------------
